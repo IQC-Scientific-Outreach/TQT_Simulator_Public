@@ -91,6 +91,7 @@ class QuantumOpticalExperiment:
         return driver_class(*args, **kwargs)
     
     def close(self):
+        self.laser.off()
         self.laser.close()
         self.powermeter.close()
         self.timetagger.close()

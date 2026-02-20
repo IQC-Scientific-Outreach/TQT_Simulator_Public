@@ -25,6 +25,13 @@ class PlotLogicGrid(QWidget):
             PlotLogic(self, timetagger, ui_config, default_logic_int=j + 1)
             for j in range(num_plot_widgets)
         ]
+
+        # defaults = [1, 2, 9, 4] 
+        # self.plots = [
+        #     PlotLogic(self, timetagger, ui_config, default_logic_int=defaults[j])
+        #     for j in range(len(defaults))
+        # ]
+        
         for i, plot in enumerate(self.plots):
             layout.addWidget(plot, i, 1)
 

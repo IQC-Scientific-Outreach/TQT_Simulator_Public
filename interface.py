@@ -134,7 +134,15 @@ class LabInterfaceApp(QMainWindow):
         
 
     def closeEvent(self,event):
+        if hasattr(self, 'realtime_data'):
+            dock = self.realtime_data.widget()
+            if hasattr(dock, 'timer') and dock.timer.isActive():
+                dock.timer.stop()
+            if hasattr(dock, 'worker') and dock.worker is not None:
+                if dock.worker.isRunning():
+                    dock.worker.wait() 
         system.close()
+        event.accept()
         return
 
 
@@ -229,8 +237,15 @@ class RealTimeDataDock(QWidget):
             self.timer.setInterval(ui_config["INTEGRATION_TIME_MS"])
 
         if self.is_measuring:
+            if not hasattr(self, 'stuck_counter'): self.stuck_counter = 0
+            self.stuck_counter += 1
+            if self.stuck_counter > 5:
+                print("Watchdog: UI seemed stuck. Forcing reset of 'is_measuring' flag.")
+                self.is_measuring = False
+                self.stuck_counter = 0
             return
             
+        self.stuck_counter = 0
         self.is_measuring = True
         
         # Disable buttons on all tabs during read
@@ -270,6 +285,43 @@ class MeasurementWorker(QThread):
         # This executes the "sleep" in the background
         self.timetagger.read(self.duration)
         self.finished.emit()
+
+class HistogramWorker(QThread):
+    finished_signal = pyqtSignal(object, object, object)
+
+    def __init__(self, timetagger, io_manager, filename, meas_time, ch_a, ch_b, bin_width, hist_width):
+        super().__init__()
+        self.tt = timetagger
+        self.io = io_manager
+        self.filename = filename
+        self.meas_time = meas_time
+        self.ch_a = ch_a
+        self.ch_b = ch_b
+        self.bin_width = bin_width
+        self.hist_width = hist_width
+
+    def run(self):
+        try:
+            self.tt.switch_logic()
+            self.tt.save_tags(
+                io=self.io,
+                filename=self.filename,
+                time=self.meas_time,
+                convert=True
+            )
+            tags = self.io.load_timetags(filename=self.filename + ".txt")
+            hist, hist_x, hist_norm = cross_correlation_histogram(
+                tags=tags,
+                ch_a=self.ch_a,
+                ch_b=self.ch_b,
+                bin_width=self.bin_width,
+                hist_width=self.hist_width,
+            )
+            self.finished_signal.emit(hist, hist_x, hist_norm)
+        except Exception as e:
+            print(f"Histogram Error: {e}")
+        finally:
+            self.tt.switch_logic()
 
 class MeasurementBase(QWidget):
     # Signals to talk to the parent (RealTimeDataDock)
@@ -968,7 +1020,7 @@ class RunMeasurementCrossCorrelationHistogram(QFrame):
         self.ch_b = QSpinBox()
         self.ch_b.setPrefix("Channel B: ")
         self.ch_b.setValue(2)
-        self.ch_b.setMinimum(2)
+        self.ch_b.setMinimum(1)
         self.ch_b.setMaximum(16)
         layout.addWidget(self.ch_b)
 
@@ -988,27 +1040,47 @@ class RunMeasurementCrossCorrelationHistogram(QFrame):
         self.hist_width.setMinimum(0.1)
         layout.addWidget(self.hist_width)
 
-        # layout.addStretch()
         self.setLayout(layout)
-        #self.update_instrument()
 
     def run_measurement(self):
-        system.timetagger.switch_logic()
-        filename = "time-tags"
-        system.timetagger.save_tags(
-            io=system.io, filename=filename, time=self.meas_time.value(), convert=True
-        )
-        system.timetagger.switch_logic()
-        tags = system.io.load_timetags(filename=filename + ".txt")
+        # Stop Continuous Mode in the other tab to avoid USB conflict
+        main_window = self.parent().parent().parent()
+        
+        if hasattr(main_window, 'realtime_data'):
+            dock = main_window.realtime_data.widget()
+            if dock.timer.isActive():
+                dock.timer.stop()
+                dock.is_measuring = False 
+                print("Force-stopped Continuous Mode for Histogram.")
 
-        hist, hist_x, hist_norm = cross_correlation_histogram(
-            tags=tags,
+        # Disable button
+        self.run_btn = self.sender()
+        self.run_btn.setEnabled(False)
+
+        filename = "time-tags"
+        
+        self.hist_worker = HistogramWorker(
+            timetagger=system.timetagger,
+            io_manager=system.io,
+            filename=filename,
+            meas_time=self.meas_time.value(),
             ch_a=self.ch_a.value(),
             ch_b=self.ch_b.value(),
             bin_width=self.bin_width.value(),
-            hist_width=self.hist_width.value(),
+            hist_width=self.hist_width.value()
         )
+        
+        self.hist_worker.finished_signal.connect(self.on_histogram_data)
+        # Connect the thread's generic 'finished' signal to re-enable the button
+        self.hist_worker.finished.connect(self.on_worker_finished) 
+        self.hist_worker.start()
 
+    def on_worker_finished(self):
+        # This always runs when the thread dies, success or fail
+        if hasattr(self, 'run_btn'):
+            self.run_btn.setEnabled(True)
+
+    def on_histogram_data(self, hist, hist_x, hist_norm):
         window_ns = system.config["COINCIDENCE_WINDOW_NS"]
 
         fig, ax = plt.subplots(1, 1)
@@ -1021,19 +1093,16 @@ class RunMeasurementCrossCorrelationHistogram(QFrame):
         real_hist_x = hist_x - hardware_shift
         window_center = delay_a - delay_b
 
-        radius_ns = window_ns / 2
-        ax.axvspan(window_center - radius_ns, window_center + radius_ns, color='green', alpha=0.2, label=f"Coinc. Window (±{radius_ns}ns)")
-        ax.axvline(window_center - radius_ns, color='green', linestyle='--', alpha=0.5)
-        ax.axvline(window_center + radius_ns, color='green', linestyle='--', alpha=0.5)
+        # Use radius for plotting to match visual expectation
+        radius = window_ns 
+        ax.axvspan(window_center - radius, window_center + radius, color='green', alpha=0.2, label=f"Coinc. Window (±{radius}ns)")
+        ax.axvline(window_center - radius, color='green', linestyle='--', alpha=0.5)
+        ax.axvline(window_center + radius, color='green', linestyle='--', alpha=0.5)
 
-        # ax.axvline(0, color='red', linestyle='--') # Optional: shows physical zero
         ax.plot(real_hist_x, hist)
         ax.set(xlabel="Time (ns)", ylabel="Counts")
   
-        # system.io.save_figure(fig=fig, filename=f"cross_correlation_ch{self.ch_a.value()}_ch{self.ch_b.value()}.png")
         plt.show()
-
-        return
 
 
 class ControlPanelLaser(QFrame):
