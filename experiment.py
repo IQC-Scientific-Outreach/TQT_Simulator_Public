@@ -25,12 +25,11 @@ class QuantumOpticalExperiment:
         self.io = IO()
 
         #self.laser = TOpticaLaser(port=self.config["LASER_COM_PORT"])
-        if self.config["LASER_COM_PORT"] != "NA":
-            self.laser = self.load_driver(
-                module_base="laser_toptica",
-                class_name="TOpticaLaser",
-                port=self.config["LASER_COM_PORT"]
-            )
+        self.laser = self.load_driver(
+            module_base="laser_toptica",
+            class_name="TOpticaLaser",
+            port=self.config["LASER_COM_PORT"]
+        )
 
         #self.timetagger = TimeTagger()
         self.timetagger = self.load_driver(
