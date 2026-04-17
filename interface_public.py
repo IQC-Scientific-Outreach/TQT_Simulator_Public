@@ -1,4 +1,4 @@
-import time
+from time import sleep
 import sys
 import numpy as np
 import pathlib
@@ -31,7 +31,7 @@ from tqt.widgets.plot_counts import PlotLogicGrid
 from experiment import QuantumOpticalExperiment
 
 
-system = QuantumOpticalExperiment(simulation=False)
+system = QuantumOpticalExperiment(simulation=True)
 
 # settings for the interface (color scheme, sizes, refresh rate, font size, etc.)
 ui_config = dict(
@@ -46,9 +46,9 @@ ui_config = dict(
     #REFRESH_TIME=200,  # [ms] #Obsolete?
     NUMBER_POINTS_MEM=100,  # [-]
     # font size to use for the photon count and power value number strings
-    NUMERIC_FONT_SIZE=12,  # [pt]
+    NUMERIC_FONT_SIZE=16,  # [pt]
     # number of single photon plots to create on the interface window
-    NUM_COUNT_PLOTS=5,  # [-]
+    NUM_COUNT_PLOTS=4,  # [-]
     INTEGRATION_TIME_MS=1000,  # in ms, timetagger integration time and UI refresh rate
     POWER_REFRESH=200  # in ms, power meter refresh rate
 )
@@ -109,7 +109,7 @@ class LabInterfaceApp(QMainWindow):
 
     def set_initial_dock_width(self):
         """Sets the initial width of the side dock panel."""
-        desired_width = 450 #450
+        desired_width = 450 
         self.resizeDocks([self.realtime_data], [desired_width], QtCore.Qt.Horizontal)
 
 
@@ -186,10 +186,9 @@ class RealTimeDataDock(QWidget):
 
         # Single Timer for the whole dock
         self.timer = QTimer(self)
-        #self.timer.setInterval(ui_config["INTEGRATION_TIME_MS"])
-        self.timer.setSingleShot(True)#self.timer.setInterval(ui_config["INTEGRATION_TIME_MS"])
+        self.timer.setInterval(ui_config["INTEGRATION_TIME_MS"])
         self.timer.timeout.connect(self.trigger_acquisition)
-        self.timer.start(0)#self.timer.start() # Start because default is Continuous
+        self.timer.start() # Start because default is Continuous
 
         # --- Tabs ---
         self.tabs = QTabWidget()
@@ -223,8 +222,7 @@ class RealTimeDataDock(QWidget):
         
         # 1. Sync the Timer
         if is_continuous:
-            if not self.is_measuring:
-                self.timer.start(0)
+            self.timer.start()
         else:
             self.timer.stop()
 
@@ -239,17 +237,15 @@ class RealTimeDataDock(QWidget):
             self.timer.setInterval(ui_config["INTEGRATION_TIME_MS"])
 
         if self.is_measuring:
+            if not hasattr(self, 'stuck_counter'): self.stuck_counter = 0
+            self.stuck_counter += 1
+            if self.stuck_counter > 5:
+                print("Watchdog: UI seemed stuck. Forcing reset of 'is_measuring' flag.")
+                self.is_measuring = False
+                self.stuck_counter = 0
             return
-        #if self.is_measuring:
-         #   if not hasattr(self, 'stuck_counter'): self.stuck_counter = 0
-          #  self.stuck_counter += 1
-           # if self.stuck_counter > 5:
-            #    print("Watchdog: UI seemed stuck. Forcing reset of 'is_measuring' flag.")
-            #    self.is_measuring = False
-             #   self.stuck_counter = 0
-            #return
             
-        #self.stuck_counter = 0
+        self.stuck_counter = 0
         self.is_measuring = True
         
         # Disable buttons on all tabs during read
@@ -262,7 +258,6 @@ class RealTimeDataDock(QWidget):
         self.worker = MeasurementWorker(system.timetagger, duration_s)
         self.worker.finished.connect(self.on_acquisition_finished)
         self.worker.start()
-
 
     def on_acquisition_finished(self):
         """Data is ready in system.timetagger. Update all views."""
@@ -277,9 +272,6 @@ class RealTimeDataDock(QWidget):
         self.tab1.update_ui_state(self.current_mode_continuous, is_measuring=False)
         self.tab3.update_ui_state(self.current_mode_continuous, is_measuring=False)
 
-        if self.current_mode_continuous:
-            self.timer.start(0)
-
 # To prevent clunkiness, new class
 class MeasurementWorker(QThread):
     finished = pyqtSignal()
@@ -290,14 +282,8 @@ class MeasurementWorker(QThread):
         self.duration = duration
 
     def run(self):
-        #start_time=self.timer.time()
         # This executes the "sleep" in the background
         self.timetagger.read(self.duration)
-        #elapsed_time = self.timer.time()-start_time
-
-        #if elapsed_time < self.duration:
-        #    time.sleep(self.duration-elapsed_time)
-
         self.finished.emit()
 
 class HistogramWorker(QThread):
@@ -332,20 +318,6 @@ class HistogramWorker(QThread):
                 hist_width=self.hist_width,
             )
             self.finished_signal.emit(hist, hist_x, hist_norm)
-            # Get the current working directory
-            cwd = os.getcwd()
-            # Define the folder and file names
-            folder_name = 'data'
-            file_name = 'histogram.txt'
-            # Construct the full file path using os.path.join
-            file_path = os.path.join(cwd, folder_name, file_name)
-            # Open file to save histogram data to
-            with open(file_path, "w") as f:
-                # Zip the lists together and write each pair as a tab-separated line
-                for a, b in zip(hist_x, hist):
-                    f.write(f"{a}\t{b}\n")
-                #f.close()
-            print("Histogram file written successfully.")
         except Exception as e:
             print(f"Histogram Error: {e}")
         finally:
@@ -405,7 +377,7 @@ class MeasurementBase(QWidget):
         if is_measuring:
             self.refresh_btn.setEnabled(False)
             self.radio_cont.setEnabled(False)
-            #self.radio_manual.setEnabled(False)
+            self.radio_manual.setEnabled(False)
         else:
             self.radio_cont.setEnabled(True)
             self.radio_manual.setEnabled(True)
@@ -472,8 +444,8 @@ class CountView(MeasurementBase):
         singles_layout.addWidget(h1, 0, 0, 1, 2, QtCore.Qt.AlignCenter)
 
         self.singles_map = {
-            "(Ch1)": [1], "(Ch2)": [2],
-            "(Ch3)": [3], "(Ch4)": [4]
+            "Alice 0 (Ch1)": [1], "Alice 1 (Ch3)": [3],
+            "Bob 0   (Ch2)": [2], "Bob 1   (Ch4)": [4]
         }
         self.single_value_labels = {}
         val_font = QFont()
@@ -506,9 +478,8 @@ class CountView(MeasurementBase):
         coinc_layout.addWidget(h2, 0, 0, 1, 2, QtCore.Qt.AlignCenter)
 
         self.coinc_map = {
-            "1&2": [1, 2], "1&3": [1, 3],
-            "1&4": [1, 4], "2&3": [2, 3],
-            "2&4": [2, 4], "3&4": [3, 4]  
+            "A0 & B0": [1, 2], "A0 & B1": [1, 4], 
+            "A1 & B0": [3, 2], "A1 & B1": [3, 4]  
         }
         self.coinc_value_labels = {}
         row = 1
@@ -1055,65 +1026,36 @@ class RunMeasurementCrossCorrelationHistogram(QFrame):
 
         # add spinbox for bin width
         self.bin_width = QDoubleSpinBox()
-        self.bin_width.setRange(0.015625, 5000.0)
         self.bin_width.setPrefix("Bin Width: ")
         self.bin_width.setSuffix(" ns")
-        self.bin_width.setValue(0.15625)
-        #self.bin_width.setMinimum(0.01)
+        self.bin_width.setValue(1)
+        self.bin_width.setMinimum(0.01)
         layout.addWidget(self.bin_width)
 
         # add spinbox for total histogram width
         self.hist_width = QDoubleSpinBox()
-        self.hist_width.setRange(0.1, 500000.0)
         self.hist_width.setPrefix("Hist. Width: ")
         self.hist_width.setSuffix(" ns")
         self.hist_width.setValue(30)
-#        self.hist_width.setMinimum(0.1)
+        self.hist_width.setMinimum(0.1)
         layout.addWidget(self.hist_width)
 
         self.setLayout(layout)
 
     def run_measurement(self):
         # Stop Continuous Mode in the other tab to avoid USB conflict
-        self.run_btn=self.sender()
-        self.run_btn.setEnabled(False)
-        main_window = self.window() #self.parent().parent().parent()
+        main_window = self.parent().parent().parent()
         
         if hasattr(main_window, 'realtime_data'):
             dock = main_window.realtime_data.widget()
-             #Force into manual
-            if dock.current_mode_continuous:
-                dock.handle_mode_change(False) 
+            if dock.timer.isActive():
+                dock.timer.stop()
+                dock.is_measuring = False 
                 print("Force-stopped Continuous Mode for Histogram.")
-                time.sleep(ui_config["INTEGRATION_TIME_MS"]/1000)
-            
-            if dock.is_measuring and dock.worker is not None and dock.worker.isRunning():
-                print("Hardware busy. Queuing histogram to start after current read")
-                dock.worker.finished.connect(self._start_histogram_worker())
-                return
-        self._start_histogram_worker()
 
-    def _start_histogram_worker(self):
-        main_window=self.window()
-
-        if hasattr(main_window, 'realtime_data'):
-            dock=main_window.realtime_data.widget()
-            try:
-                dock.worker.finished.disconnect(self._start_histogram_worker)
-            except(TypeError, RuntimeError):
-                pass
-
-            # Disconnect signal
-
-            #Force into manual
-            #if dock.timer.isActive():
-            #    dock.timer.stop()
-            #    dock.is_measuring = False 
-            #    print("Force-stopped Continuous Mode for Histogram.")
-
-            # Disable button
-            #self.run_btn = self.sender()
-            #self.run_btn.setEnabled(False)
+        # Disable button
+        self.run_btn = self.sender()
+        self.run_btn.setEnabled(False)
 
         filename = "time-tags"
         
@@ -1121,7 +1063,7 @@ class RunMeasurementCrossCorrelationHistogram(QFrame):
             timetagger=system.timetagger,
             io_manager=system.io,
             filename=filename,
-             meas_time=self.meas_time.value(),
+            meas_time=self.meas_time.value(),
             ch_a=self.ch_a.value(),
             ch_b=self.ch_b.value(),
             bin_width=self.bin_width.value(),
@@ -1178,7 +1120,7 @@ class ControlPanelLaser(QFrame):
         self.emission_checkbox = QCheckBox("Emission")
         layout.addWidget(self.emission_checkbox)
 
-        max_pow = 100 if system.simulation else 150
+        max_pow = 100 if system.simulation else 30
         self.power_edit = SliderWithEdit(self, min=0, max=max_pow, step=0.5, unit="mW", vertical=True)
         self.power_edit.setValue(system.config["LASER_POWER"])
 
@@ -1339,12 +1281,12 @@ class FullEquipmentControlTab(QWidget):
         top_row_layout = QHBoxLayout()
         # Col 1 Laser
         self.laser_control_panel = ControlPanelLaser(self)
-        self.laser_control_panel.setMaximumHeight(470)#270
+        self.laser_control_panel.setMaximumHeight(270)
         top_row_layout.addWidget(self.laser_control_panel)
 
         # Col 2 Time Tagger
         self.timetag_control_panel = ControlPanelTimeTag(self)
-        self.timetag_control_panel.setMaximumHeight(470)
+        self.timetag_control_panel.setMaximumHeight(270)
         top_row_layout.addWidget(self.timetag_control_panel)
 
         # Add to layout
