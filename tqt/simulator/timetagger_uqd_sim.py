@@ -5,10 +5,14 @@ import numpy as np
 from itertools import product
 from collections import Counter
 import itertools
+<<<<<<< HEAD
 # erf is called only on scalar bounds, so the stdlib version is sufficient.
 # Using math.erf keeps the simulator dependency-free of SciPy (matters for the
 # WebAssembly/Pyodide web build, and lightens the desktop install too).
 from math import erf
+=======
+from scipy.special import erf
+>>>>>>> e90d70a911bcfc5555b78f0859b06873c29d54d5
 
 BIN_RESOLUTION_NS = 0.15625
 j_sigma = 1.0
@@ -353,6 +357,7 @@ class TimeTagger:
         self.parties.append(new_party)
         print(f"[SIM] Added Party '{name}' on Channels {ch_0}/{ch_1}")
 
+<<<<<<< HEAD
     def generate_tag_array(self, time=1.0):
         """
         Generate raw time tags that respect the CURRENT QUANTUM STATE.
@@ -374,12 +379,35 @@ class TimeTagger:
 
         probs_map = {}
         outcomes = list(product([0, 1], repeat=len(self.parties)))  # 0=Ch_A, 1=Ch_B
+=======
+    def save_tags(self, io=None, filename="tags", time=1.0, convert=True):
+        """
+        Generates raw time tags that respect the CURRENT QUANTUM STATE.
+        """
+        print(f"[SIM] Generating {time}s of physics-based tags...")
+        
+        base_rate = 0.0
+        if self.laser and self.laser.is_emission_on:
+             base_rate = self.laser.power * self.laser_rate
+
+        if base_rate == 0:
+            self._write_tags_file(io, filename, [])
+            return
+
+        num_events = int(base_rate * time)
+        
+        probs_map = {}
+        outcomes = list(product([0, 1], repeat=len(self.parties))) # 0=Ch_A, 1=Ch_B
+        
+        total_prob = 0
+>>>>>>> e90d70a911bcfc5555b78f0859b06873c29d54d5
         for outcome in outcomes:
             op_list = []
             channels = []
             for i, result_idx in enumerate(outcome):
                 p = self.parties[i]
                 op_list.append(p.ops[result_idx])
+<<<<<<< HEAD
                 channels.append(p.channels[result_idx])
 
             full_op = op_list[0]
@@ -387,18 +415,36 @@ class TimeTagger:
                 full_op = np.kron(full_op, op)
 
             prob = np.real(np.trace(self.rho @ full_op))
+=======
+                channels.append(p.channels[result_idx]) 
+            
+            full_op = op_list[0]
+            for op in op_list[1:]:
+                full_op = np.kron(full_op, op)
+                
+            p = np.real(np.trace(self.rho @ full_op))
+>>>>>>> e90d70a911bcfc5555b78f0859b06873c29d54d5
 
             eff = 1.0
             for ch in channels:
                 eff *= self.channel_efficiencies[ch-1] if 1<=ch<=16 else 0
+<<<<<<< HEAD
 
             probs_map[tuple(channels)] = prob * eff
+=======
+                
+            probs_map[tuple(channels)] = p * eff
+            total_prob += p * eff
+
+        tags = []
+>>>>>>> e90d70a911bcfc5555b78f0859b06873c29d54d5
 
         intervals = np.random.exponential(1/base_rate, num_events)
         emission_times_s = np.cumsum(intervals)
 
         pair_keys = list(probs_map.keys())
         pair_probs = list(probs_map.values())
+<<<<<<< HEAD
         prob_no_click = max(0.0, 1.0 - sum(pair_probs))
 
         distribution = np.random.multinomial(num_events, pair_probs + [prob_no_click])
@@ -438,6 +484,40 @@ class TimeTagger:
         """
         print(f"[SIM] Generating {time}s of physics-based tags...")
         tags = self.generate_tag_array(time).tolist()
+=======
+        
+        sum_p = sum(pair_probs)
+        prob_no_click = 1.0 - sum_p
+        if prob_no_click < 0: prob_no_click = 0
+        
+        distribution = np.random.multinomial(num_events, pair_probs + [prob_no_click])
+        
+        current_event_idx = 0
+        for i, count in enumerate(distribution[:-1]): 
+            if count == 0: continue
+            
+            active_channels = pair_keys[i] 
+            
+            start_idx = current_event_idx
+            end_idx = current_event_idx + count
+            if end_idx > len(emission_times_s): break
+            
+            these_times = emission_times_s[start_idx:end_idx]
+            current_event_idx += count
+            
+            for ch in active_channels:
+                delay = self.delays[ch-1] if 1<=ch<=16 else 0
+                jitter = np.random.normal(0, j_sigma, count)
+        
+                times_ns = (these_times * 1e9) + delay + jitter
+                bins = (times_ns / BIN_RESOLUTION_NS).astype(np.int64)
+                
+                for b in bins:
+                    tags.append([ch, b])
+                    
+        # Sort and Save
+        tags.sort(key=lambda x: x[1])
+>>>>>>> e90d70a911bcfc5555b78f0859b06873c29d54d5
         self._write_tags_file(io, filename, tags)
     
     def _write_tags_file(self, io, filename, tags_list):

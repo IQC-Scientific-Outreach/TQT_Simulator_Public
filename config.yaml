@@ -32,10 +32,17 @@ TIMETAGGER_CHANNEL_DELAYS:
 - 0.0
 - 0.0
 TIMETAGGER_CHANNEL_THRESHOLDS:  # Time tagger channel thresholds (V)
+<<<<<<< HEAD
 - 2.0
 - 2.0
 - 2.0
 - 2.0
+=======
+- 3.0
+- 3.0
+- 3.0
+- 3.0
+>>>>>>> e90d70a911bcfc5555b78f0859b06873c29d54d5
 - 1.0
 - 1.0
 - 1.0
