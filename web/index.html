@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TQT Photonic Quantum Technologies — Simulator</title>
+  <link rel="icon" href="iqc.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" charset="utf-8"></script>
+</head>
+<body>
+  <!-- Loading overlay while Pyodide boots -->
+  <div id="loader">
+    <div class="loader-box">
+      <img src="iqc.png" alt="logo" class="loader-logo" />
+      <h1>Photonic Quantum Simulator</h1>
+      <p id="loader-status">Loading Python runtime…</p>
+      <div class="spinner"></div>
+      <p class="loader-hint">First load downloads the Python runtime (~once, then cached).</p>
+    </div>
+  </div>
+
+  <header class="toolbar">
+    <img src="iqc.png" alt="logo" class="logo" />
+    <span class="title">TQT Photonic Quantum Technologies — Simulator</span>
+    <span class="spacer"></span>
+    <button id="lights-toggle" class="lights-btn">Turn on lights</button>
+  </header>
+
+  <main class="layout">
+    <!-- LEFT: main control tabs -->
+    <section class="main-pane">
+      <nav class="tabs" id="main-tabs">
+        <button class="tab active" data-tab="control">Full System Control</button>
+        <button class="tab" data-tab="histogram">Histogram</button>
+      </nav>
+
+      <!-- Tab: Full System Control -->
+      <div class="tab-panel active" id="tab-control">
+        <div class="top-row">
+          <!-- Laser -->
+          <div class="card">
+            <h3>Laser Control</h3>
+            <label class="check"><input type="checkbox" id="laser-emission" /> Emission</label>
+            <div class="slider-row vertical-power">
+              <label>Power</label>
+              <input type="range" id="laser-power" min="0" max="100" step="0.5" value="10" />
+              <input type="number" id="laser-power-val" min="0" max="100" step="0.5" value="10" />
+              <span class="unit">mW</span>
+            </div>
+            <div class="field">
+              <label>Measured power</label>
+              <span id="power-readout">0.00</span>
+              <span class="unit">mW</span>
+            </div>
+            <button class="primary" id="laser-update">Update instrument</button>
+          </div>
+
+          <!-- Time Tagger -->
+          <div class="card">
+            <h3>Time Tagger Control</h3>
+            <div class="field">
+              <label>Meas. Time</label>
+              <input type="number" id="meas-time" min="100" max="600000" step="100" value="1000" />
+              <span class="unit">ms</span>
+            </div>
+            <div class="field">
+              <label>Coinc. Window</label>
+              <input type="number" id="coinc-window" min="0.25" max="10" step="0.05" value="3.0" />
+              <span class="unit">ns</span>
+            </div>
+            <div class="delays-scroll">
+              <table id="delays-table">
+                <thead><tr><th></th><th>Delay (ns)</th></tr></thead>
+                <tbody><!-- filled by JS --></tbody>
+              </table>
+            </div>
+            <button class="primary" id="tt-update">Update instrument</button>
+          </div>
+        </div>
+
+        <!-- Polarization -->
+        <div class="card polarization">
+          <h3>Polarization Control (Sim)</h3>
+          <div class="source-group">
+            <div class="field">
+              <label><b>Source Type:</b></label>
+              <select id="source-type">
+                <option value="0">0: Sagnac (Tunable)</option>
+                <option value="1">1: Mystery Source A</option>
+                <option value="2">2: Mystery Source B</option>
+                <option value="3">3: Mystery Source C</option>
+              </select>
+            </div>
+            <div id="source-controls">
+              <div class="preset-row" id="source-presets"></div>
+              <div class="slider-row">
+                <label>Source HWP</label>
+                <input type="range" id="source-hwp" min="0" max="180" step="1" value="0" />
+                <input type="number" id="source-hwp-val" min="0" max="180" step="1" value="0" />
+                <span class="unit">°</span>
+              </div>
+            </div>
+          </div>
+          <div class="parties" id="parties"><!-- filled by JS --></div>
+          <button class="primary" id="pol-update">Update Waveplates</button>
+        </div>
+      </div>
+
+      <!-- Tab: Histogram -->
+      <div class="tab-panel" id="tab-histogram">
+        <div class="card">
+          <h3>Cross Correlation Histogram</h3>
+          <div class="hist-controls">
+            <div class="field"><label>Measurement Time</label><input type="number" id="h-meas" value="1.0" min="0.2" step="0.1" /><span class="unit">s</span></div>
+            <div class="field"><label>Channel A</label><input type="number" id="h-cha" value="1" min="1" max="16" step="1" /></div>
+            <div class="field"><label>Channel B</label><input type="number" id="h-chb" value="2" min="1" max="16" step="1" /></div>
+            <div class="field"><label>Bin Width</label><input type="number" id="h-bin" value="1" min="0.01" step="0.1" /><span class="unit">ns</span></div>
+            <div class="field"><label>Hist. Width</label><input type="number" id="h-width" value="30" min="0.1" step="1" /><span class="unit">ns</span></div>
+          </div>
+          <button class="primary" id="hist-run">Run cross-correlation</button>
+          <div id="hist-plot" class="plot-big"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Draggable divider between the control pane and the data dock -->
+    <div class="splitter" id="splitter" title="Drag to resize"></div>
+
+    <!-- RIGHT: realtime data dock -->
+    <aside class="dock" id="dock">
+      <nav class="tabs" id="dock-tabs">
+        <button class="tab active" data-tab="stats">Photon Statistics</button>
+        <button class="tab" data-tab="counts">Counts View</button>
+      </nav>
+
+      <div class="acquisition-controls">
+        <label class="radio"><input type="radio" name="mode" value="cont" checked /> Continuous</label>
+        <label class="radio"><input type="radio" name="mode" value="manual" /> Manual</label>
+        <button id="refresh-btn" disabled>Refresh</button>
+      </div>
+
+      <div class="tab-panel active" id="dock-stats">
+        <div id="stat-plots"><!-- 4 plots filled by JS --></div>
+      </div>
+
+      <div class="tab-panel" id="dock-counts">
+        <div class="counts-grid">
+          <div class="counts-block">
+            <h4>Singles</h4>
+            <table id="singles-table"></table>
+          </div>
+          <div class="counts-block">
+            <h4>Coincidences</h4>
+            <table id="coinc-table"></table>
+          </div>
+        </div>
+        <hr />
+        <div class="counts-grid">
+          <div class="counts-block">
+            <h4>Expectation Value (Singles)</h4>
+            <table id="exp-singles-table"></table>
+          </div>
+          <div class="counts-block">
+            <h4>Couples expectation values</h4>
+            <table id="exp-couples-table"></table>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

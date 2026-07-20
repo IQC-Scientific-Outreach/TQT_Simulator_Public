@@ -1,0 +1,50 @@
+---
+# Public / simulation config. Real hardware addresses are intentionally
+# omitted here (the private config.yaml holds them). These values are only
+# used by the simulation drivers, so the ports are placeholders.
+
+# Laser settings
+LASER_COM_PORT: NA  # use NA when no laser is connected (simulation)
+LASER_POWER: 10  # mW
+
+# Thorlabs optical power meter address
+POWERMETER_PORT: NA
+
+# Time tagger settings
+
+COINCIDENCE_WINDOW_NS: 3.0  # in ns
+
+TIMETAGGER_CHANNEL_DELAYS:
+- 10.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+TIMETAGGER_CHANNEL_THRESHOLDS:  # Time tagger channel thresholds (V)
+- 2.0
+- 2.0
+- 2.0
+- 2.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0

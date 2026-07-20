@@ -1,0 +1,20 @@
+# standard libraries
+qutip
+matplotlib
+numpy
+scipy
+pandas
+seaborn
+tqdm  # for progress bars (useful for long running analysis code)
+ipython  # makes life easier with different IDEs
+cmcrameri  # excellent colorplots https://zenodo.org/record/5501399
+
+# for saving yaml configuration files, while preserving comments and order
+ruamel.yaml
+
+# for utils
+pyvisa
+
+# for interfaces
+pyqtgraph
+PyQt5

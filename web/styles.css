@@ -1,0 +1,202 @@
+:root {
+  --bg: #2b2b2e;
+  --panel: #353539;
+  --panel-2: #3f3f45;
+  --border: #4a4a52;
+  --text: #e6e6ea;
+  --muted: #a0a0aa;
+  --accent: #9b59b6;
+  --accent-2: #3498db;
+  --plot-bg: #e6e6ea;
+}
+
+/* Light theme: activated by the "Turn on lights" toggle (body.light-mode).
+   Custom properties inherit, so redefining them here restyles the whole app. */
+body.light-mode {
+  --bg: #f4f4f6;
+  --panel: #ffffff;
+  --panel-2: #ececf0;
+  --border: #c9c9d1;
+  --text: #1e1e22;
+  --muted: #66666f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* ---------- Loader ---------- */
+#loader {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+}
+.loader-box { text-align: center; max-width: 420px; }
+.loader-logo { width: 72px; height: 72px; object-fit: contain; }
+#loader h1 { font-size: 20px; margin: 12px 0 4px; }
+#loader-status { color: var(--muted); margin: 6px 0; }
+.loader-hint { color: var(--muted); font-size: 11px; margin-top: 16px; }
+.spinner {
+  width: 32px; height: 32px; margin: 12px auto;
+  border: 3px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Toolbar ---------- */
+.toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.toolbar .logo { width: 26px; height: 26px; object-fit: contain; }
+.toolbar .title { font-weight: 600; }
+.toolbar .spacer { flex: 1; }
+.lights-btn {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 6px 12px; cursor: pointer;
+}
+.lights-btn:hover { background: var(--border); }
+
+/* ---------- Layout ---------- */
+.layout { display: flex; height: calc(100vh - 45px); }
+.main-pane { flex: 1; min-width: 280px; display: flex; flex-direction: column; padding: 10px; overflow: auto; }
+.dock {
+  width: 40vw; min-width: 320px; max-width: 70vw; flex-shrink: 0;
+  display: flex; flex-direction: column; padding: 10px; overflow: auto;
+  background: var(--panel);
+}
+
+/* Draggable divider */
+.splitter {
+  width: 7px; flex-shrink: 0; cursor: col-resize;
+  background: var(--border); position: relative;
+}
+.splitter::after {
+  content: ""; position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 40px; border-radius: 2px; background: var(--muted); opacity: 0.5;
+}
+.splitter:hover, .splitter.dragging { background: var(--accent); }
+body.resizing { cursor: col-resize; user-select: none; }
+
+/* Stack vertically on narrow / portrait screens */
+@media (max-width: 860px) {
+  .layout { flex-direction: column; height: auto; }
+  .dock { width: auto !important; max-width: none; border-top: 1px solid var(--border); }
+  .splitter { display: none; }
+  .top-row { flex-direction: column; }
+}
+
+/* ---------- Tabs ---------- */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+.tab {
+  background: transparent; color: var(--muted); border: none;
+  padding: 8px 16px; cursor: pointer; border-bottom: 2px solid transparent;
+  font-size: 13px;
+}
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ---------- Cards ---------- */
+.card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 6px; padding: 12px; margin-bottom: 10px;
+}
+.card h3 { margin: 0 0 10px; font-size: 14px; }
+.card h4 { margin: 0 0 8px; font-size: 13px; text-decoration: underline; text-align: center; }
+.top-row { display: flex; gap: 10px; align-items: stretch; }
+.top-row .card { flex: 1; }
+
+button.primary {
+  background: var(--accent-2); color: white; border: none;
+  border-radius: 5px; padding: 8px 12px; cursor: pointer; width: 100%; margin-top: 8px;
+}
+button.primary:hover { filter: brightness(1.1); }
+
+/* ---------- Fields & sliders ---------- */
+.field { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.field label { min-width: 110px; color: var(--muted); }
+.field input, .field select {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
+}
+.field input[type=number] { width: 90px; }
+.field select { flex: 1; }
+.unit { color: var(--muted); }
+.check { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+
+.slider-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.slider-row label { min-width: 90px; color: var(--muted); }
+.slider-row input[type=range] { flex: 1; }
+.slider-row input[type=number] {
+  width: 70px; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 4px;
+}
+
+/* ---------- Delays table ---------- */
+.delays-scroll { max-height: 150px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; margin-top: 6px; }
+#delays-table { width: 100%; border-collapse: collapse; }
+#delays-table th { position: sticky; top: 0; background: var(--panel-2); padding: 4px 6px; font-size: 11px; color: var(--muted); }
+#delays-table td { padding: 2px 6px; }
+#delays-table input { width: 80px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; }
+
+/* ---------- Polarization ---------- */
+.source-group { background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 10px; margin-bottom: 10px; }
+.preset-row { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+.preset-row button, .basis-grid button {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 5px 8px; cursor: pointer; font-size: 12px;
+}
+.preset-row button:hover, .basis-grid button:hover { background: var(--border); }
+.parties { display: flex; gap: 10px; }
+.party { flex: 1; background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 10px; }
+.party h4 { text-decoration: none; }
+.basis-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 8px; }
+.basis-grid .col-head { color: var(--muted); font-size: 10px; text-align: center; }
+
+/* ---------- Acquisition ---------- */
+.acquisition-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.radio { display: flex; align-items: center; gap: 5px; }
+#refresh-btn {
+  background: var(--accent-2); color: white; border: none; border-radius: 4px;
+  padding: 5px 14px; cursor: pointer; margin-left: auto;
+}
+#refresh-btn:disabled { background: var(--border); color: var(--muted); cursor: default; }
+
+/* ---------- Stat plots ---------- */
+#stat-plots { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.stat-plot { display: flex; gap: 8px; align-items: center; flex: 1 1 0; min-height: 150px; border: 1px solid var(--border); border-radius: 5px; padding: 6px; }
+.stat-plot .count-val { width: 70px; font-size: 18px; text-align: right; }
+.stat-plot .plot { flex: 1; height: 100%; min-height: 130px; }
+#dock-stats.tab-panel.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.chan-buttons { display: flex; gap: 1px; }
+.chan-btn {
+  width: 16px; height: 22px; border: 1px solid var(--border);
+  background: #cfcfcf; color: #333; cursor: pointer; font-size: 9px; padding: 0; border-radius: 2px;
+}
+.chan-btn.on { background: #7299ba; color: white; }
+
+/* ---------- Counts tables ---------- */
+.counts-grid { display: flex; gap: 14px; }
+.counts-block { flex: 1; }
+.counts-block table { width: 100%; border-collapse: collapse; }
+.counts-block td { padding: 3px 4px; }
+.counts-block td.val { text-align: right; font-size: 15px; font-variant-numeric: tabular-nums; }
+.dock hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+.plot-big { width: 100%; height: 420px; margin-top: 10px; background: var(--plot-bg); border-radius: 5px; }
+
+/* ---------- Error banner ---------- */
+#error-bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 2000;
+  background: #c0392b; color: #fff; text-align: center;
+  padding: 8px 14px; font-size: 13px;
+}

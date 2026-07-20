@@ -1,0 +1,1319 @@
+from time import sleep
+import sys
+import numpy as np
+import pathlib
+import matplotlib.pyplot as plt
+import os
+import pyqtgraph as pg
+from pyqtgraph.functions import mkPen
+
+from PyQt5 import Qt, QtCore, QtGui
+from PyQt5.QtWidgets import (
+    QMainWindow,
+    QApplication,
+    QWidget,
+    QTabWidget,
+    QVBoxLayout,
+    QGridLayout,
+    QHBoxLayout,
+)
+from PyQt5.QtWidgets import QLineEdit, QLabel, QDoubleSpinBox, QSpinBox, QCheckBox, QRadioButton, QAction, QButtonGroup, QSizePolicy
+from PyQt5.QtWidgets import QPushButton, QFrame, QDockWidget, QScrollArea, QComboBox
+from PyQt5.QtCore import QTimer, QThread, pyqtSignal
+from PyQt5.QtGui import QFont
+
+from tqt.utils.io import IO
+from tqt.analysis.histogram import cross_correlation_histogram
+
+from tqt.widgets.slider_edit import SliderWithEdit
+from tqt.widgets.plot_counts import PlotLogicGrid
+
+from experiment import QuantumOpticalExperiment
+
+
+system = QuantumOpticalExperiment(simulation=True)
+
+# settings for the interface (color scheme, sizes, refresh rate, font size, etc.)
+ui_config = dict(
+    # settings for the main window(s)
+    WIDTH=1200,  # [pt]
+    HEIGHT=900,  # [pt]
+    COLORS=["#9b59b6", "#3498db", "#95a5a6", "#e74c3c", "#34495e", "#2ecc71"],
+    PLOT_BACKGROUND="#E6E6EA",
+    PLOT_FOREGROUND="#434A42",
+    LOGO_PATH=str(pathlib.Path(__file__).parent.joinpath("tqt/widgets/iqc.png")),
+    # interactivity settings
+    #REFRESH_TIME=200,  # [ms] #Obsolete?
+    NUMBER_POINTS_MEM=100,  # [-]
+    # font size to use for the photon count and power value number strings
+    NUMERIC_FONT_SIZE=16,  # [pt]
+    # number of single photon plots to create on the interface window
+    NUM_COUNT_PLOTS=4,  # [-]
+    INTEGRATION_TIME_MS=1000,  # in ms, timetagger integration time and UI refresh rate
+    POWER_REFRESH=200  # in ms, power meter refresh rate
+)
+
+
+class LabInterfaceApp(QMainWindow):
+    singleton: 'LabInterfaceApp' = None
+    def __init__(self):
+        super().__init__()
+
+        self.title = "TQT Photonic Quantum Technologies"
+        self.left = 100
+        self.top = 100
+        self.width = ui_config["WIDTH"]
+        self.height = ui_config["HEIGHT"]
+        self.setWindowIcon(QtGui.QIcon(ui_config["LOGO_PATH"]))
+
+        # For light switch
+        self.is_dark_mode = True # Track current state
+        
+        self.toolbar = self.addToolBar("Main Toolbar")
+        self.toolbar.setMovable(False) # Lock it in place
+        self.toolbar.setFloatable(False)
+
+        empty = QWidget()
+        empty.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.toolbar.addWidget(empty)
+        # --
+        self.theme_switch = None
+        if system.simulation:
+            self.theme_switch = QAction("Turn on lights", self)
+            self.theme_switch.setToolTip("Toggle Switch")
+            self.theme_switch.triggered.connect(self.toggle_theme)
+            self.toolbar.addAction(self.theme_switch)
+
+        layout = QVBoxLayout()
+
+        self.setWindowTitle(self.title)
+        self.setGeometry(self.left, self.top, self.width, self.height)
+
+        self.realtime_data = QDockWidget("", self)
+        self.realtime_data.setWidget(RealTimeDataDock(self))
+        self.realtime_data.setFloating(False)
+        self.addDockWidget(Qt.Qt.RightDockWidgetArea, self.realtime_data)
+
+        QTimer.singleShot(0, self.set_initial_dock_width)
+
+        self.tab_widget = TabManager(self)
+        self.setCentralWidget(self.tab_widget)
+
+        #self.resize(1366, 768) 
+        #self.resize(1920, 1080)
+        #self.resize(3840, 2160)
+
+        self.setLayout(layout)
+
+        self.showMaximized()
+
+    def set_initial_dock_width(self):
+        """Sets the initial width of the side dock panel."""
+        desired_width = 450 
+        self.resizeDocks([self.realtime_data], [desired_width], QtCore.Qt.Horizontal)
+
+
+    def toggle_theme(self):
+        app = QApplication.instance()
+        has_sim_control = hasattr(system.timetagger, "set_ambient_light")
+        if self.is_dark_mode:
+            # Switch to Light Mode (Standard Fusion Palette)
+            app.setPalette(app.style().standardPalette())
+            self.is_dark_mode = False
+            self.theme_switch.setText("Turn off lights")
+            if has_sim_control:
+                system.timetagger.set_ambient_light(True)
+        else:
+            # Switch to Dark Mode (Your Custom Palette)
+            app.setPalette(palette)
+            self.is_dark_mode = True
+            self.theme_switch.setText("Turn on lights")
+            if has_sim_control:
+                system.timetagger.set_ambient_light(False)
+        
+        
+
+    def closeEvent(self,event):
+        if hasattr(self, 'realtime_data'):
+            dock = self.realtime_data.widget()
+            if hasattr(dock, 'timer') and dock.timer.isActive():
+                dock.timer.stop()
+            if hasattr(dock, 'worker') and dock.worker is not None:
+                if dock.worker.isRunning():
+                    dock.worker.wait() 
+        system.close()
+        event.accept()
+        return
+
+
+class TabManager(QWidget):
+    def __init__(self, parent):
+        super(QWidget, self).__init__(parent)
+        layout = QVBoxLayout(self)
+
+        #self.file_input_output_panel = FileInputOuputPanel(self)
+        #layout.addWidget(self.file_input_output_panel)
+
+        # Initialize tab screen
+        self.tabs = QTabWidget()
+        self.tabs.currentChanged.connect(self.on_tab_change)
+
+        self.tab1 = FullEquipmentControlTab(self)
+        self.tabs.addTab(self.tab1, "Full System Control")
+
+        self.tab2 = RunMeasurementsTab(self)
+        self.tabs.addTab(self.tab2, "Histogram")
+
+        self.tabs.setCurrentIndex(0)
+
+        # Add tabs to widget
+        layout.addWidget(self.tabs)
+        self.setLayout(layout)
+
+    def on_tab_change(self):
+        return
+
+
+class RealTimeDataDock(QWidget):
+    def __init__(self, parent):
+        super(QWidget, self).__init__(parent)
+        layout = QVBoxLayout(self)
+
+        # --- Centralized Logic ---
+        self.is_measuring = False
+        self.worker = None
+        self.current_mode_continuous = True # Default state
+
+        # Single Timer for the whole dock
+        self.timer = QTimer(self)
+        self.timer.setInterval(ui_config["INTEGRATION_TIME_MS"])
+        self.timer.timeout.connect(self.trigger_acquisition)
+        self.timer.start() # Start because default is Continuous
+
+        # --- Tabs ---
+        self.tabs = QTabWidget()
+        
+        self.tab1 = PhotonStatisticsMonitor(self)
+        self.tabs.addTab(self.tab1, "Photon Statistics")
+
+        if not system.simulation:
+            self.tab2 = PlotOpticalPower(
+                self, powermeter=system.powermeter, ui_config=ui_config
+            )
+            self.tabs.addTab(self.tab2, "Power Meter")
+
+        self.tab3 = CountView(self)
+        self.tabs.addTab(self.tab3, "Counts View")
+
+        layout.addWidget(self.tabs)
+        self.setLayout(layout)
+
+        # --- Connections ---
+        # 1. Connect Mode Changes (Sync Tabs + Control Timer)
+        self.tab1.mode_changed_signal.connect(self.handle_mode_change)
+        self.tab3.mode_changed_signal.connect(self.handle_mode_change)
+
+        # 2. Connect Refresh Requests (Both buttons trigger the same function)
+        self.tab1.refresh_requested_signal.connect(self.trigger_acquisition)
+        self.tab3.refresh_requested_signal.connect(self.trigger_acquisition)
+
+    def handle_mode_change(self, is_continuous):
+        self.current_mode_continuous = is_continuous
+        
+        # 1. Sync the Timer
+        if is_continuous:
+            self.timer.start()
+        else:
+            self.timer.stop()
+
+        # 2. Sync the Tabs Visuals
+        self.tab1.set_mode_external(is_continuous)
+        self.tab3.set_mode_external(is_continuous)
+
+    def trigger_acquisition(self):
+        """Runs the measurement ONCE, then updates EVERYONE."""
+        # Update Timer Interval if config changed
+        if self.timer.interval() != ui_config["INTEGRATION_TIME_MS"]:
+            self.timer.setInterval(ui_config["INTEGRATION_TIME_MS"])
+
+        if self.is_measuring:
+            if not hasattr(self, 'stuck_counter'): self.stuck_counter = 0
+            self.stuck_counter += 1
+            if self.stuck_counter > 5:
+                print("Watchdog: UI seemed stuck. Forcing reset of 'is_measuring' flag.")
+                self.is_measuring = False
+                self.stuck_counter = 0
+            return
+            
+        self.stuck_counter = 0
+        self.is_measuring = True
+        
+        # Disable buttons on all tabs during read
+        self.tab1.update_ui_state(self.current_mode_continuous, is_measuring=True)
+        self.tab3.update_ui_state(self.current_mode_continuous, is_measuring=True)
+
+        duration_s = ui_config["INTEGRATION_TIME_MS"] / 1000.0
+        
+        # Use the existing MeasurementWorker class
+        self.worker = MeasurementWorker(system.timetagger, duration_s)
+        self.worker.finished.connect(self.on_acquisition_finished)
+        self.worker.start()
+
+    def on_acquisition_finished(self):
+        """Data is ready in system.timetagger. Update all views."""
+        
+        # 1. Update Views
+        # The hardware state is now fresh, so both tabs will see the EXACT same data
+        self.tab1.update_view()
+        self.tab3.update_view()
+
+        # 2. Reset State
+        self.is_measuring = False
+        self.tab1.update_ui_state(self.current_mode_continuous, is_measuring=False)
+        self.tab3.update_ui_state(self.current_mode_continuous, is_measuring=False)
+
+# To prevent clunkiness, new class
+class MeasurementWorker(QThread):
+    finished = pyqtSignal()
+
+    def __init__(self, timetagger, duration):
+        super().__init__()
+        self.timetagger = timetagger
+        self.duration = duration
+
+    def run(self):
+        # This executes the "sleep" in the background
+        self.timetagger.read(self.duration)
+        self.finished.emit()
+
+class HistogramWorker(QThread):
+    finished_signal = pyqtSignal(object, object, object)
+
+    def __init__(self, timetagger, io_manager, filename, meas_time, ch_a, ch_b, bin_width, hist_width):
+        super().__init__()
+        self.tt = timetagger
+        self.io = io_manager
+        self.filename = filename
+        self.meas_time = meas_time
+        self.ch_a = ch_a
+        self.ch_b = ch_b
+        self.bin_width = bin_width
+        self.hist_width = hist_width
+
+    def run(self):
+        try:
+            self.tt.switch_logic()
+            self.tt.save_tags(
+                io=self.io,
+                filename=self.filename,
+                time=self.meas_time,
+                convert=True
+            )
+            tags = self.io.load_timetags(filename=self.filename + ".txt")
+            hist, hist_x, hist_norm = cross_correlation_histogram(
+                tags=tags,
+                ch_a=self.ch_a,
+                ch_b=self.ch_b,
+                bin_width=self.bin_width,
+                hist_width=self.hist_width,
+            )
+            self.finished_signal.emit(hist, hist_x, hist_norm)
+        except Exception as e:
+            print(f"Histogram Error: {e}")
+        finally:
+            self.tt.switch_logic()
+
+class MeasurementBase(QWidget):
+    # Signals to talk to the parent (RealTimeDataDock)
+    mode_changed_signal = pyqtSignal(bool)  # True=Cont, False=Manual
+    refresh_requested_signal = pyqtSignal() # User clicked Refresh
+
+    def __init__(self, parent):
+        super(QWidget, self).__init__(parent)
+        
+        self.layout_controls = QVBoxLayout()
+        self.layout_controls.setContentsMargins(5, 10, 5, 0)
+        
+        # --- UI Controls ---
+        self.mode_group = QButtonGroup(self)
+        
+        self.radio_cont = QRadioButton("Continuous")
+        self.radio_cont.setChecked(True)
+        self.radio_cont.toggled.connect(self._handle_local_mode_toggle)
+        self.layout_controls.addWidget(self.radio_cont)
+        self.mode_group.addButton(self.radio_cont)
+
+        self.radio_manual = QRadioButton("Manual")
+        self.layout_controls.addWidget(self.radio_manual)
+        self.mode_group.addButton(self.radio_manual)
+
+        self.layout_controls.addSpacing(10)
+
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.clicked.connect(self.refresh_requested_signal.emit)
+        self.layout_controls.addWidget(self.refresh_btn)
+        
+        self.layout_controls.addStretch()
+
+    def _handle_local_mode_toggle(self):
+        """User clicked a radio button locally."""
+        is_continuous = self.radio_cont.isChecked()
+        self.mode_changed_signal.emit(is_continuous)
+        self.update_ui_state(is_continuous)
+
+    def set_mode_external(self, is_continuous):
+        """Called by parent to force UI update without triggering loops."""
+        self.mode_group.blockSignals(True)
+        if is_continuous:
+            self.radio_cont.setChecked(True)
+        else:
+            self.radio_manual.setChecked(True)
+        self.mode_group.blockSignals(False)
+        self.update_ui_state(is_continuous)
+
+    def update_ui_state(self, is_continuous, is_measuring=False):
+        """Enables/Disables buttons based on state."""
+        if is_measuring:
+            self.refresh_btn.setEnabled(False)
+            self.radio_cont.setEnabled(False)
+            self.radio_manual.setEnabled(False)
+        else:
+            self.radio_cont.setEnabled(True)
+            self.radio_manual.setEnabled(True)
+            # Only enable refresh if we are in Manual mode
+            self.refresh_btn.setEnabled(not is_continuous)
+
+    def update_view(self):
+        """Child classes must implement this to update their specific plots/tables."""
+        pass
+    
+class PhotonStatisticsMonitor(MeasurementBase):
+    def __init__(self, parent):
+        super().__init__(parent) # Init the base (Timer + Controls)
+
+        # Main Layout: Horizontal
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Add the inherited controls layout
+        layout.addLayout(self.layout_controls)
+
+        # Plots
+        self.plot = PlotLogicGrid(
+            self,
+            timetagger=system.timetagger,
+            ui_config=ui_config,
+            num_plot_widgets=ui_config["NUM_COUNT_PLOTS"],
+        )
+        layout.addWidget(self.plot)
+        self.setLayout(layout)
+
+    def update_view(self):
+        # Specific logic for updating plots
+        if hasattr(self.plot, 'plots'):
+            for plot_widget in self.plot.plots:
+                plot_widget.onNewData()
+
+
+class CountView(MeasurementBase):
+    def __init__(self, parent):
+        super().__init__(parent) # Init the base (Timer + Controls)
+
+        # Main Layout
+        main_layout = QHBoxLayout()
+        main_layout.setContentsMargins(10, 20, 10, 20)
+
+        # Add the inherited controls layout
+        main_layout.addLayout(self.layout_controls, 0)
+
+        # Visual Separator
+        line = QFrame()
+        line.setFrameShape(QFrame.VLine)
+        line.setFrameShadow(QFrame.Sunken)
+        main_layout.addWidget(line)
+
+        right_side_layout = QVBoxLayout()
+        counts_row_layout = QHBoxLayout()
+
+        # --- Table Logic (Singles) ---
+        singles_layout = QGridLayout()
+        singles_layout.setSpacing(10)
+        h1 = QLabel("Singles")
+        h1.setStyleSheet("font-weight: bold; text-decoration: underline; font-size: 14pt;")
+        singles_layout.addWidget(h1, 0, 0, 1, 2, QtCore.Qt.AlignCenter)
+
+        self.singles_map = {
+            "Alice 0 (Ch1)": [1], "Alice 1 (Ch3)": [3],
+            "Bob 0   (Ch2)": [2], "Bob 1   (Ch4)": [4]
+        }
+        self.single_value_labels = {}
+        val_font = QFont()
+        val_font.setPointSize(ui_config["NUMERIC_FONT_SIZE"])
+
+        row = 1
+        for name, channels in self.singles_map.items():
+            lbl_name = QLabel(name)
+            lbl_val = QLabel("0")
+            lbl_val.setFont(val_font)
+            lbl_val.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            singles_layout.addWidget(lbl_name, row, 0)
+            singles_layout.addWidget(lbl_val, row, 1)
+            self.single_value_labels[tuple(channels)] = lbl_val
+            row += 1
+        singles_layout.setRowStretch(row, 1)
+        counts_row_layout.addLayout(singles_layout)
+
+        # Separator 2
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.VLine)
+        line2.setFrameShadow(QFrame.Sunken)
+        counts_row_layout.addWidget(line2)
+
+        # --- Table Logic (Coincidences) ---
+        coinc_layout = QGridLayout()
+        coinc_layout.setSpacing(10)
+        h2 = QLabel("Coincidences")
+        h2.setStyleSheet("font-weight: bold; text-decoration: underline; font-size: 14pt;")
+        coinc_layout.addWidget(h2, 0, 0, 1, 2, QtCore.Qt.AlignCenter)
+
+        self.coinc_map = {
+            "A0 & B0": [1, 2], "A0 & B1": [1, 4], 
+            "A1 & B0": [3, 2], "A1 & B1": [3, 4]  
+        }
+        self.coinc_value_labels = {}
+        row = 1
+        for name, channels in self.coinc_map.items():
+            lbl_name = QLabel(name)
+            lbl_val = QLabel("0")
+            lbl_val.setFont(val_font)
+            lbl_val.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            coinc_layout.addWidget(lbl_name, row, 0)
+            coinc_layout.addWidget(lbl_val, row, 1)
+            self.coinc_value_labels[tuple(channels)] = lbl_val
+            row += 1
+        coinc_layout.setRowStretch(row, 1)
+        counts_row_layout.addLayout(coinc_layout)
+        right_side_layout.addLayout(counts_row_layout)
+
+        #self.setLayout(main_layout)
+
+        line_horiz = QFrame()
+        line_horiz.setFrameShape(QFrame.HLine)
+        line_horiz.setFrameShadow(QFrame.Sunken)
+        right_side_layout.addWidget(line_horiz)
+
+        expectation_layout = QHBoxLayout()
+        e_singles_layout = QGridLayout()
+        e_singles_layout.setSpacing(10)
+        h3 = QLabel("Expectation Value (Singles)")
+        h3.setStyleSheet("font-weight: bold; text-decoration: underline; font-size: 14pt;")
+        e_singles_layout.addWidget(h3, 0, 0, 1, 2, QtCore.Qt.AlignCenter)
+
+        self.exp_singles_map = {
+            "E(Alice)": ([1], [3]), 
+            "E(Bob)":   ([2], [4])
+        }
+        self.exp_single_widgets = {}
+
+        row = 1
+        for name, (pos, neg) in self.exp_singles_map.items():
+            lbl_name = QLabel(name)
+            lbl_val = QLabel("0")
+            lbl_val.setFont(val_font)
+            lbl_val.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            e_singles_layout.addWidget(lbl_name, row, 0)
+            e_singles_layout.addWidget(lbl_val, row, 1)
+            self.exp_single_widgets[(tuple(pos), tuple(neg))] = lbl_val
+            row += 1
+
+        expectation_layout.addLayout(e_singles_layout, 1)
+
+        line3 = QFrame()
+        line3.setFrameShape(QFrame.VLine)
+        line3.setFrameShadow(QFrame.Sunken)
+        expectation_layout.addWidget(line3)
+
+        e_couples_layout = QGridLayout()
+        e_couples_layout.setSpacing(10)
+        h4 = QLabel("Couples expectation values")
+        h4.setStyleSheet("font-weight: bold; text-decoration: underline; font-size: 14pt;")
+        e_couples_layout.addWidget(h4, 0, 0, 1, 2, QtCore.Qt.AlignCenter)
+
+        self.exp_couples_map = {
+            "E(A, B)": {
+                "plus":  [[1, 2], [3, 4]], 
+                "minus": [[1, 4], [3, 2]] 
+            }
+        }
+        self.exp_couples_widgets = {}
+
+        row = 1
+        for name, groups in self.exp_couples_map.items():
+            lbl_name = QLabel(name)
+            lbl_val = QLabel("0.0000")
+            lbl_val.setFont(val_font)
+            lbl_val.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            
+            e_couples_layout.addWidget(lbl_name, row, 0)
+            e_couples_layout.addWidget(lbl_val, row, 1)
+            
+            self.exp_couples_widgets[name] = lbl_val
+            row += 1
+
+        expectation_layout.addLayout(e_couples_layout, 1)
+        right_side_layout.addLayout(expectation_layout)
+        #right_side_layout.addStretch()
+
+
+
+        """analysis_layout = QVBoxLayout()
+        h3 = QLabel("Expectation Values")
+        h3.setStyleSheet("font-weight: bold; text-decoration: underline; font-size: 14pt;")
+        analysis_layout.addWidget(h3, 0, QtCore.Qt.AlignCenter)
+
+        self.e_label = QLabel("E = 0.0000")
+        self.e_label.setFont(val_font)
+        self.e_label.setAlignment(QtCore.Qt.AlignCenter)
+        analysis_layout.addWidget(self.e_label)
+
+        analysis_layout.addWidget(QLabel("(N_corr - N_anti) / Total"), 0, QtCore.Qt.AlignCenter)
+        
+        right_side_layout.addLayout(analysis_layout)"""
+
+        # Add right side to main
+        main_layout.addLayout(right_side_layout, 1)
+        self.setLayout(main_layout)
+
+    def update_view(self):
+        # Update Singles
+        for channels, label_widget in self.single_value_labels.items():
+            _, count, _ = system.timetagger.get_count_data(list(channels))
+            label_widget.setText(f"{count:,}")
+
+        # Update Coincidences
+        for channels, label_widget in self.coinc_value_labels.items():
+            _, count, _ = system.timetagger.get_count_data(list(channels))
+            label_widget.setText(f"{count:,}")
+        
+        for (pos_chans, neg_chans), label_widget in self.exp_single_widgets.items():
+            _, count_pos, _ = system.timetagger.get_count_data(list(pos_chans))
+            _, count_neg, _ = system.timetagger.get_count_data(list(neg_chans))
+            total = count_pos + count_neg
+            if total > 0:
+                expectation_val = (count_pos - count_neg) / total
+                label_widget.setText(f"{expectation_val:.3f}")
+            else:
+                label_widget.setText("0.0000")
+
+        for name, label_widget in self.exp_couples_widgets.items():
+            groups = self.exp_couples_map[name]
+            n_plus = 0
+            for chans in groups["plus"]:
+                _, c, _ = system.timetagger.get_count_data(list(chans))
+                n_plus += c
+            n_minus = 0
+            for chans in groups["minus"]:
+                _, c, _ = system.timetagger.get_count_data(list(chans))
+                n_minus += c
+
+            total = n_plus + n_minus
+            
+            if total > 0:
+                e_val = (n_plus - n_minus) / total
+                label_widget.setText(f"{e_val:.4f}")
+            else:
+                label_widget.setText("0.0000")
+
+class ControlPanelTimeTag(QFrame):
+    def __init__(self, parent):
+        super(QWidget, self).__init__(parent)
+        self.setFrameShape(QFrame.StyledPanel)
+        self.timer = QTimer(self)
+        layout = QVBoxLayout()
+
+        layout.addWidget(QLabel("Time Tagger Control:"))
+        self.update_button = QPushButton("Update instrument")
+        self.update_button.clicked.connect(self.update_instrument)
+        layout.addWidget(self.update_button)
+
+        # spinbox for setting the measurement time of the time tagger/refresh rate of the UI
+        self.meas_time_sb = QSpinBox()
+        self.meas_time_sb.setMaximum(600000) #10min max
+        self.meas_time_sb.setMinimum(100)
+        self.meas_time_sb.setValue(ui_config["INTEGRATION_TIME_MS"])  # set to current default from config
+        self.meas_time_sb.setPrefix("Meas. Time: ")
+        self.meas_time_sb.setSuffix(" ms")
+        layout.addWidget(self.meas_time_sb)
+
+        # spinbox for setting the coincidence window of the time tagger
+        self.coinc_window_sb = QDoubleSpinBox()
+        self.coinc_window_sb.setValue(
+            system.config["COINCIDENCE_WINDOW_NS"]
+        )  # set to current default from config
+        self.coinc_window_sb.setPrefix("Coinc. Window: ")
+        self.coinc_window_sb.setSuffix(" ns")
+        self.coinc_window_sb.setMaximum(10.0)
+        self.coinc_window_sb.setMinimum(0.25)
+        layout.addWidget(self.coinc_window_sb)
+
+        scroll = QScrollArea(self)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
+        scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
+        scroll.setWidgetResizable(True)
+
+        container = QWidget()
+        scroll.setWidget(container)
+        scroll.layout = QGridLayout(container)
+
+        scroll.layout.addWidget(QLabel(""), 0, 0)
+        scroll.layout.addWidget(QLabel("Delay (ns)"), 0, 1)
+        if not system.simulation:
+            scroll.layout.addWidget(QLabel("Threshold (V)"), 0, 2)
+        self.delay_spinboxes = []
+        self.threshold_spinboxes = []
+        for i in range(16):
+            scroll.layout.addWidget(QLabel(f"Ch{i+1}"), i + 1, 0)
+
+            sb = QDoubleSpinBox(self)
+            sb.setValue(
+                system.config["TIMETAGGER_CHANNEL_DELAYS"][i]
+            )  # set to current default from config
+            self.delay_spinboxes.append(sb)
+            scroll.layout.addWidget(sb, i + 1, 1)
+
+            if not system.simulation:
+                sb = QDoubleSpinBox(self)
+                sb.setValue(
+                    system.config["TIMETAGGER_CHANNEL_THRESHOLDS"][i]
+                )  # set to current default from config
+                sb.setMaximum(4.0)
+                sb.setMinimum(-4.0)
+                self.threshold_spinboxes.append(sb)
+                scroll.layout.addWidget(sb, i + 1, 2)
+
+        # set layout after adding scroll bar
+        layout.addWidget(scroll)
+        self.setLayout(layout)
+        self.update_instrument()
+
+    def update_instrument(self):
+        delays = [delay_spinbox.value() for delay_spinbox in self.delay_spinboxes]
+        system.set_timetagger_delays(delays)
+        if not system.simulation:
+            thresholds = [
+                threshold_spinbox.value() for threshold_spinbox in self.threshold_spinboxes
+            ]
+            system.set_timetagger_thresholds(thresholds)
+        meas_time = self.meas_time_sb.value()
+        window = self.coinc_window_sb.value()
+        ui_config["INTEGRATION_TIME_MS"] = meas_time
+
+        system.set_timetagger_window(window)
+        
+        
+        message = "Update time tagger | "
+        #self.parent().parent().parent().parent().parent().update_message(message)
+        print(message)
+        #PhotonStatisticsMonitor.reset_timer(self)
+
+
+
+
+class ControlPanelPolarization(QFrame):
+    def __init__(self, parent):
+        super(QWidget, self).__init__(parent)
+        self.setFrameShape(QFrame.StyledPanel)
+
+        #self.setFixedWidth(650)
+
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Main Layout for the Frame
+        main_layout.addWidget(QLabel("Polarization Control (Sim)"))
+
+        self.update_button = QPushButton("Update Waveplates")
+        self.update_button.setMinimumHeight(30)
+        self.update_button.clicked.connect(self.update_instrument)
+        main_layout.addWidget(self.update_button)
+        main_layout.addWidget(QLabel("")) # Spacer
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded) 
+        scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setSpacing(10)
+
+        source_group = QFrame()
+        source_group.setFrameShape(QFrame.StyledPanel)
+        source_layout = QVBoxLayout()
+
+        source_select_layout = QHBoxLayout()
+        source_select_layout.addWidget(QLabel("<b>Source Type:</b>"))
+        
+        self.source_combo = QComboBox()
+        self.source_combo.addItems([
+            "0: Sagnac (Tunable)", 
+            "1: Mystery Source A", 
+            "2: Mystery Source B", 
+            "3: Mystery Source C"
+        ])
+        self.source_combo.currentIndexChanged.connect(self.change_source_type)
+        source_select_layout.addWidget(self.source_combo, 1)
+        source_layout.addLayout(source_select_layout)
+
+        self.source_controls_widget = QWidget()
+        source_controls_layout = QVBoxLayout(self.source_controls_widget)
+        source_controls_layout.setContentsMargins(0, 5, 0, 0)
+
+        
+        presets_layout = QHBoxLayout()
+        source_presets = [
+            ("|01>", 0), 
+            ("|Ψ->", 22.5), 
+            ("|10>", 45), 
+            ("|Ψ+>", 67.5)
+        ]
+        for label, angle in source_presets:
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda checked, a=angle: self.set_source_preset(a))
+            presets_layout.addWidget(btn)
+
+        source_controls_layout.addLayout(presets_layout)
+
+        # Source HWP Slider
+        source_row = QHBoxLayout()
+        source_row.addWidget(QLabel("Source HWP:"))
+        
+        self.source_hwp_slider = SliderWithEdit(self, min=0, max=180, step=1, unit="°")
+        self.source_hwp_slider.setValue(0) 
+        source_row.addWidget(self.source_hwp_slider, 1) 
+        
+        source_controls_layout.addLayout(source_row)
+        
+        source_layout.addWidget(self.source_controls_widget) 
+
+        source_group.setLayout(source_layout)
+        layout.addWidget(source_group)
+
+        # --- SECTION 2: DETECTION CONTROL (Alice/Bob) ---
+        self.controls = {}
+
+        if hasattr(system.timetagger, 'parties'):
+            
+            parties_layout = QHBoxLayout()
+            
+            for party in system.timetagger.parties:
+                # Group for each party
+                party_group = QFrame()
+                party_group.setFrameShape(QFrame.StyledPanel)
+                party_layout = QVBoxLayout()
+                
+                # Title
+                title = QLabel(f"<b>{party.name}</b>")
+                title.setAlignment(QtCore.Qt.AlignCenter)
+                party_layout.addWidget(title)
+
+                presets_grid = QGridLayout()
+                presets_grid.setSpacing(5) 
+
+                headers = ["Z Basis", "X Basis", "Y Basis", "CHSH"]
+                for col, text in enumerate(headers):
+                    lbl = QLabel(text)
+                    lbl.setAlignment(QtCore.Qt.AlignCenter)
+                    lbl.setStyleSheet("color: gray; font-size: 10pt;")
+                    presets_grid.addWidget(lbl, 0, col)
+
+                # (Col, Row, Label, Key)
+                buttons_data = [
+                    # Z Column 
+                    (0, 1, "Z+",  "Z+"),
+                    (0, 2, "Z-",  "Z-"),
+
+                    # X Column
+                    (1, 1, "X+",  "X+"),
+                    (1, 2, "X-",  "X-"),
+
+                    # Y Column
+                    (2, 1, "Y+",  "Y+"),
+                    (2, 2, "Y-",  "Y-"),
+
+                    # Mixed Column 
+                    (3, 1, "(-Z-X)/√2",    "-Z-X"),
+                    (3, 2, "(-Z+X)/√2",    "-Z+X"),
+                ]
+
+                # Create and Place Buttons
+                for col, row, label, key in buttons_data:
+                    btn = QPushButton(label)
+                    btn.setToolTip(f"Set {party.name} to {label}")
+                    btn.setMaximumWidth(62)
+                    btn.clicked.connect(lambda checked, p=party.name, k=key: self.set_preset_basis(p, k))
+                    
+                    presets_grid.addWidget(btn, row, col)
+
+                party_layout.addLayout(presets_grid)
+
+                # HWP Slider
+                party_layout.addWidget(QLabel("HWP:"))
+                hwp_slider = SliderWithEdit(self, min=0, max=180, step=1, unit="°")
+                hwp_slider.setValue(np.degrees(party.hwp_angle))
+                party_layout.addWidget(hwp_slider)
+
+                # QWP Slider
+                party_layout.addWidget(QLabel("QWP:"))
+                qwp_check = QCheckBox("Use QWP?")
+                qwp_check.setChecked(True)
+                qwp_check.toggled.connect(party.qwp_toggle)
+                qwp_slider = SliderWithEdit(self, min=0, max=180, step=1, unit="°")
+                qwp_slider.setValue(np.degrees(party.qwp_angle))
+                party_layout.addWidget(qwp_check)
+                party_layout.addWidget(qwp_slider)
+
+                # Save references
+                self.controls[party.name] = {
+                    'hwp': hwp_slider, 
+                    'qwp': qwp_slider, 
+                    'qwp_check': qwp_check 
+                }
+                
+                party_group.setLayout(party_layout)
+                parties_layout.addWidget(party_group, 1)
+
+            layout.addLayout(parties_layout)
+
+        layout.addStretch()
+
+        scroll.setWidget(container)
+        main_layout.addWidget(scroll)
+
+    def set_preset_basis(self, party_name, basis):
+        if party_name not in self.controls: return
+
+        """presets = {
+            "Z":   (0.0,  0.0), 
+            "X":   (22.5, 45.0),   
+            "Y":   (22.5, 0),  
+            "-Z-X": (56.25, 112.5),  
+            "-Z+X": (33.75, 67.5)   
+        }"""
+
+        presets = {
+            "Z+": (0.0, 0.0), 
+            "Z-": (45.0, 0.0), 
+
+            "X+": (22.5, 45.0), 
+            "X-": (67.5, 45.0), 
+
+            "Y+": (22.5, 0.0),
+            "Y-": (67.5, 0.0),
+
+            "-Z-X": (56.25, 112.5), 
+            "-Z+X": (33.75, 67.5)
+        }
+
+        if basis in presets:
+            h, q = presets[basis]
+            
+            if 'qwp_check' in self.controls[party_name]:
+                checkbox = self.controls[party_name]['qwp_check']
+                if not checkbox.isChecked():
+                    checkbox.setChecked(True)
+
+            self.controls[party_name]['hwp'].setValue(h)
+            self.controls[party_name]['qwp'].setValue(q)
+            
+            self.update_instrument()
+            print(f"Set {party_name} to {basis} (HWP={h}, QWP={q})")
+
+    def set_source_preset(self, angle):
+        self.source_hwp_slider.setValue(angle)
+        self.update_instrument()
+        print(f"Source set to preset: {angle}°")
+
+    def update_instrument(self):
+        message = "Update Polarization | "
+        
+        # 1. Update Source (if method exists in backend)
+        source_val = self.source_hwp_slider.value()
+        if hasattr(system.timetagger, 'set_source_hwp'):
+            system.timetagger.set_source_hwp(np.deg2rad(source_val))
+            message += f"[Source: {source_val}°] "
+
+        # 2. Update Parties (Alice/Bob)
+        for name, widgets in self.controls.items():
+            hwp_deg = widgets['hwp'].value()
+            qwp_deg = widgets['qwp'].value()
+
+            hwp_rad = np.deg2rad(hwp_deg)
+            qwp_rad = np.deg2rad(qwp_deg)
+
+            system.timetagger.set_waveplates(name, hwp_rad, qwp_rad)
+            message += f"[{name} H:{hwp_deg:.0f} Q:{qwp_deg:.0f}] "
+
+        print(message)
+    
+    def change_source_type(self, index):
+        """
+        Handles switching between Sagnac and Mystery sources.
+        """
+        if hasattr(system.timetagger, 'set_source_type'):
+            system.timetagger.set_source_type(index)
+
+        is_sagnac = (index == 0)
+
+        if hasattr(self, 'source_controls_widget'):
+            self.source_controls_widget.setVisible(is_sagnac)
+
+        self.update_instrument()
+        print(f"UI: Source switched to Type {index}")
+
+
+class RunMeasurementsTab(QWidget):
+    def __init__(self, parent):
+        super(QWidget, self).__init__(parent)
+
+        layout = QHBoxLayout()
+
+        layout.addWidget(RunMeasurementCrossCorrelationHistogram(self))
+
+        # layout.addStretch()
+        self.setLayout(layout)
+
+
+class RunMeasurementCrossCorrelationHistogram(QFrame):
+    def __init__(self, parent):
+        super(QWidget, self).__init__(parent)
+        self.setFrameShape(QFrame.StyledPanel)
+
+        layout = QVBoxLayout()
+
+        layout.addWidget(QLabel("Cross Correlation Histogram:"))
+
+        run_pushbutton = QPushButton("Run cross-correlation")
+        run_pushbutton.clicked.connect(self.run_measurement)
+        layout.addWidget(run_pushbutton)
+
+        # add spinbox for setting the integration time
+        self.meas_time = QDoubleSpinBox()
+        self.meas_time.setPrefix("Measurement Time: ")
+        self.meas_time.setSuffix(" s")
+        self.meas_time.setValue(1.0)
+        self.meas_time.setMinimum(0.2)
+        layout.addWidget(self.meas_time)
+
+        # add spinbox for which channel to use as Channel A
+        self.ch_a = QSpinBox()
+        self.ch_a.setPrefix("Channel A:")
+        self.ch_a.setValue(1)
+        self.ch_a.setMinimum(1)
+        self.ch_a.setMaximum(16)
+        layout.addWidget(self.ch_a)
+
+        # add spinbox for which channel to use as Channel B
+        self.ch_b = QSpinBox()
+        self.ch_b.setPrefix("Channel B: ")
+        self.ch_b.setValue(2)
+        self.ch_b.setMinimum(1)
+        self.ch_b.setMaximum(16)
+        layout.addWidget(self.ch_b)
+
+        # add spinbox for bin width
+        self.bin_width = QDoubleSpinBox()
+        self.bin_width.setPrefix("Bin Width: ")
+        self.bin_width.setSuffix(" ns")
+        self.bin_width.setValue(1)
+        self.bin_width.setMinimum(0.01)
+        layout.addWidget(self.bin_width)
+
+        # add spinbox for total histogram width
+        self.hist_width = QDoubleSpinBox()
+        self.hist_width.setPrefix("Hist. Width: ")
+        self.hist_width.setSuffix(" ns")
+        self.hist_width.setValue(30)
+        self.hist_width.setMinimum(0.1)
+        layout.addWidget(self.hist_width)
+
+        self.setLayout(layout)
+
+    def run_measurement(self):
+        # Stop Continuous Mode in the other tab to avoid USB conflict
+        main_window = self.parent().parent().parent()
+        
+        if hasattr(main_window, 'realtime_data'):
+            dock = main_window.realtime_data.widget()
+            if dock.timer.isActive():
+                dock.timer.stop()
+                dock.is_measuring = False 
+                print("Force-stopped Continuous Mode for Histogram.")
+
+        # Disable button
+        self.run_btn = self.sender()
+        self.run_btn.setEnabled(False)
+
+        filename = "time-tags"
+        
+        self.hist_worker = HistogramWorker(
+            timetagger=system.timetagger,
+            io_manager=system.io,
+            filename=filename,
+            meas_time=self.meas_time.value(),
+            ch_a=self.ch_a.value(),
+            ch_b=self.ch_b.value(),
+            bin_width=self.bin_width.value(),
+            hist_width=self.hist_width.value()
+        )
+        
+        self.hist_worker.finished_signal.connect(self.on_histogram_data)
+        # Connect the thread's generic 'finished' signal to re-enable the button
+        self.hist_worker.finished.connect(self.on_worker_finished) 
+        self.hist_worker.start()
+
+    def on_worker_finished(self):
+        # This always runs when the thread dies, success or fail
+        if hasattr(self, 'run_btn'):
+            self.run_btn.setEnabled(True)
+
+    def on_histogram_data(self, hist, hist_x, hist_norm):
+        window_ns = system.config["COINCIDENCE_WINDOW_NS"]
+
+        fig, ax = plt.subplots(1, 1)
+        
+        delay_a = system.config["TIMETAGGER_CHANNEL_DELAYS"][self.ch_a.value() - 1]
+        delay_b = system.config["TIMETAGGER_CHANNEL_DELAYS"][self.ch_b.value() - 1]
+        
+        # Calculate shifts
+        hardware_shift = delay_b - delay_a
+        real_hist_x = hist_x - hardware_shift
+        window_center = delay_a - delay_b
+
+        # Use radius for plotting to match visual expectation
+        radius = window_ns 
+        ax.axvspan(window_center - radius, window_center + radius, color='green', alpha=0.2, label=f"Coinc. Window (±{radius}ns)")
+        ax.axvline(window_center - radius, color='green', linestyle='--', alpha=0.5)
+        ax.axvline(window_center + radius, color='green', linestyle='--', alpha=0.5)
+
+        ax.plot(real_hist_x, hist)
+        ax.set(xlabel="Time (ns)", ylabel="Counts")
+  
+        plt.show()
+
+
+class ControlPanelLaser(QFrame):
+    def __init__(self, parent):
+        super(QWidget, self).__init__(parent)
+        self.setFrameShape(QFrame.StyledPanel)
+
+        layout = QVBoxLayout()
+
+        layout.addWidget(QLabel("Laser Control:"))
+        self.update_button = QPushButton("Update instrument")
+        self.update_button.clicked.connect(self.update_instrument)
+        layout.addWidget(self.update_button)
+
+        self.emission_checkbox = QCheckBox("Emission")
+        layout.addWidget(self.emission_checkbox)
+
+        max_pow = 100 if system.simulation else 30
+        self.power_edit = SliderWithEdit(self, min=0, max=max_pow, step=0.5, unit="mW", vertical=True)
+        self.power_edit.setValue(system.config["LASER_POWER"])
+
+        layout.addWidget(self.power_edit)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def update_instrument(self):
+        message = "Update laser | "
+        if self.emission_checkbox.isChecked():
+            message += "Turn emission on"
+            system.laser.on()
+            system.laser.set_power(self.power_edit.value())
+        else:
+            message += "Turn emission off"
+            system.laser.off()
+
+        print(message)
+
+
+
+        
+class PlotOpticalPower(QWidget):
+    def __init__(self, parent, powermeter=None, ui_config=None):
+        super(QWidget, self).__init__(parent)
+        self.powermeter = powermeter
+        self.ui_config = ui_config
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(ui_config["POWER_REFRESH"])  # in milliseconds
+        self.timer.start()
+        self.timer.timeout.connect(self.onNewData)
+
+        layout = QVBoxLayout()
+        # layout.setColumnStretch(1, 1)
+        # layout.setRowStretch(1, 1)
+
+        # add row of checkboxes to set pattern
+        self.count_value = QLabel(str(0))
+        self.count_value.setFont(QFont("Arial", ui_config["NUMERIC_FONT_SIZE"]))
+        layout.addWidget(self.count_value)
+
+        # plot initialization
+        self.plot = pg.PlotWidget()
+        self.plot.setLabel("left", "Optical Power (mW)")
+        self.plot.time = [0]
+        self.plot.data = [0]
+        self.plot.getAxis("bottom").setTicks([])
+
+        YLIM = [0, 0.1]
+        self.ylim = YLIM
+
+        self.data = {
+            "x": list(np.linspace(-10, 0, self.ui_config["NUMBER_POINTS_MEM"])),
+            "y": list(np.zeros(self.ui_config["NUMBER_POINTS_MEM"])),
+        }
+        self.line = self.plot.plot(
+            self.data["x"], self.data["y"], pen=mkPen(color=self.ui_config["COLORS"][1])
+        )
+        layout.addWidget(self.plot)
+
+        self.setLayout(layout)
+
+    def onNewData(self):
+
+        new_count_value = self.powermeter.get_power() * 1000  # W -> mW
+
+        # set the label text to the current value
+        self.count_value.setText("Current power: {:.5f} mW".format(new_count_value))
+
+        # add the current count value to the plot
+        if new_count_value > self.ylim[1]:
+            self.ylim[1] = new_count_value
+        # self.plot.setYRange(self.ylim[0], self.ylim[1])
+
+        # update with the most recent count value
+        self.update_array(
+            self.data["y"], new_count_value, self.ui_config["NUMBER_POINTS_MEM"]
+        )
+        self.line.setData(self.data["x"], self.data["y"])
+        return
+
+    @staticmethod
+    def update_array(array, new_value, size):
+        array.append(new_value)
+        if len(array) >= size:
+            array.pop(0)
+        return
+
+
+class FileInputOuputPanel(QWidget):
+    def __init__(self, parent):
+        super(QWidget, self).__init__(parent)
+
+        layout = QVBoxLayout()
+        options = QHBoxLayout()
+        paths = QHBoxLayout()
+        layout.addWidget(QLabel("Save path:"))
+
+        self.default_top_path = QLineEdit(f"{IO.default_path}")
+        paths.addWidget(self.default_top_path)
+
+        self.parent_path = QLineEdit("data")
+        paths.addWidget(self.parent_path)
+
+        layout.addLayout(paths)
+
+        self.disable_paths = QCheckBox("Edit folder path")
+        self.disable_paths.toggled.connect(self.disable_path_edits)
+        options.addWidget(self.disable_paths)
+
+        self.include_date = QCheckBox("Include date?")
+        self.include_date.toggled.connect(self.update_io)
+        options.addWidget(self.include_date)
+
+        self.include_uuid = QCheckBox("Include unique ID?")
+        self.include_uuid.toggled.connect(self.update_io)
+
+        options.addWidget(self.include_uuid)
+        options.addStretch()
+
+        self.path = QLabel("")
+        layout.addWidget(self.path)
+
+        layout.addLayout(options)
+        layout.addStretch()
+        self.setLayout(layout)
+
+        # set the defaults of whether to include the date and/or unique ID string
+        # self.include_uuid.toggle()
+        self.include_date.toggle()
+
+    def update_io(self):
+        io = IO.directory(
+            path=self.default_top_path.text(),
+            folder=self.parent_path.text(),
+            include_date=self.include_date.isChecked(),
+            include_uuid=self.include_uuid.isChecked(),
+        )
+        self.path.setText(str(io.path))
+        print(str(io.path))
+        system.io = io
+        return
+
+    def disable_path_edits(self):
+        self.default_top_path.setEnabled(self.disable_paths.isChecked())
+        self.parent_path.setEnabled(self.disable_paths.isChecked())
+
+class FullEquipmentControlTab(QWidget):
+    def __init__(self, parent):
+        super(QWidget, self).__init__(parent)
+
+        # Main Layout is Vertical (Top Row + Bottom Row)
+        main_layout = QVBoxLayout()
+
+
+        top_row_layout = QHBoxLayout()
+        # Col 1 Laser
+        self.laser_control_panel = ControlPanelLaser(self)
+        self.laser_control_panel.setMaximumHeight(270)
+        top_row_layout.addWidget(self.laser_control_panel)
+
+        # Col 2 Time Tagger
+        self.timetag_control_panel = ControlPanelTimeTag(self)
+        self.timetag_control_panel.setMaximumHeight(270)
+        top_row_layout.addWidget(self.timetag_control_panel)
+
+        # Add to layout
+        main_layout.addLayout(top_row_layout)
+
+        if system.simulation and hasattr(system.timetagger, 'parties'):
+            self.pol_control_panel = ControlPanelPolarization(self)
+            main_layout.addWidget(self.pol_control_panel, 1)
+        
+        self.setLayout(main_layout)
+    
+
+
+if __name__ == "__main__":
+    
+    from tqt.widgets import palette
+
+    if hasattr(QtCore.Qt, 'AA_EnableHighDpiScaling'):
+        QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(QtCore.Qt, 'AA_UseHighDpiPixmaps'):
+        QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
+
+    app = QApplication(sys.argv)
+
+    app.setStyle("Fusion")
+    app.setPalette(palette)
+
+    main = LabInterfaceApp()
+    main.show()
+    sys.exit(app.exec_())
