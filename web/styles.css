@@ -69,7 +69,7 @@ body {
 .layout { display: flex; height: calc(100vh - 45px); }
 .main-pane { flex: 1; min-width: 280px; display: flex; flex-direction: column; padding: 10px; overflow: auto; }
 .dock {
-  width: 40vw; min-width: 320px; max-width: 70vw; flex-shrink: 0;
+  width: 48vw; min-width: 320px; max-width: 70vw; flex-shrink: 0;
   display: flex; flex-direction: column; padding: 10px; overflow: auto;
   background: var(--panel);
 }
@@ -172,10 +172,14 @@ button.primary:hover { filter: brightness(1.1); }
 #refresh-btn:disabled { background: var(--border); color: var(--muted); cursor: default; }
 
 /* ---------- Stat plots ---------- */
-#stat-plots { display: flex; flex-direction: column; gap: 8px; height: 100%; }
-.stat-plot { display: flex; gap: 8px; align-items: center; flex: 1 1 0; min-height: 150px; border: 1px solid var(--border); border-radius: 5px; padding: 6px; }
+#stat-plots { display: flex; flex-direction: column; gap: 14px; height: 100%; }
+.stat-plot {
+  display: flex; gap: 8px; align-items: center; flex: 1 1 0; min-height: 150px;
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+  background: var(--panel-2); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+}
 .stat-plot .count-val { width: 70px; font-size: 18px; text-align: right; }
-.stat-plot .plot { flex: 1; height: 100%; min-height: 130px; }
+.stat-plot .plot { flex: 1; height: 100%; min-height: 130px; border-radius: 4px; overflow: hidden; }
 #dock-stats.tab-panel.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .chan-buttons { display: flex; gap: 1px; }
 .chan-btn {

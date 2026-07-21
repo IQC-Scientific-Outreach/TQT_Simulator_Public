@@ -25,6 +25,7 @@ let timer = null;
 let isMeasuring = false;
 let isContinuous = true;
 let isDarkMode = true;
+let NUM_CHANNELS = 16; // fetched from Python at boot (TimeTagger._num_channels)
 
 /* =========================================================================
  * Pyodide bootstrap
@@ -46,6 +47,7 @@ async function boot() {
   pyodide.runPython("import sys; sys.path.insert(0, '/sim')");
   await pyodide.runPythonAsync("from sim_bridge import sim");
   simProxy = pyodide.globals.get("sim");
+  NUM_CHANNELS = pyCall("get_num_channels");
 
   buildUI();
   wireEvents();
@@ -78,12 +80,11 @@ const DEFAULT_DELAYS = [10.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 function defaultStatPattern(j) {
   const n = j + 1;
   const pat = [];
-  for (let ch = 1; ch <= 16; ch++) pat.push(((n >> (ch - 1)) & 1) === 1);
+  for (let ch = 1; ch <= NUM_CHANNELS; ch++) pat.push(((n >> (ch - 1)) & 1) === 1);
   return pat;
 }
-const statPatterns = Array.from({ length: NUM_COUNT_PLOTS }, (_, j) =>
-  defaultStatPattern(j)
-);
+// Populated in buildUI(), once NUM_CHANNELS is known from Python.
+let statPatterns = [];
 const statPlotData = Array.from({ length: NUM_COUNT_PLOTS }, () =>
   new Array(NUMBER_POINTS_MEM).fill(0)
 );
@@ -115,6 +116,9 @@ const BASIS_PRESETS = {
 const partyControls = {}; // name -> {hwp, qwp, qwpCheck}
 
 function buildUI() {
+  statPatterns = Array.from({ length: NUM_COUNT_PLOTS }, (_, j) =>
+    defaultStatPattern(j)
+  );
   buildDelaysTable();
   buildSourcePresets();
   buildParties();
@@ -126,10 +130,10 @@ function buildUI() {
 function buildDelaysTable() {
   const tbody = document.querySelector("#delays-table tbody");
   tbody.innerHTML = "";
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < NUM_CHANNELS; i++) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>Ch${i + 1}</td><td><input type="number" step="0.1"
-      class="delay-input" data-ch="${i}" value="${DEFAULT_DELAYS[i]}" /></td>`;
+      class="delay-input" data-ch="${i}" value="${DEFAULT_DELAYS[i] ?? 0}" /></td>`;
     tbody.appendChild(tr);
   }
 }
@@ -175,12 +179,12 @@ function buildParties() {
       <div class="basis-grid">${gridCells}</div>
       <div class="basis-grid presets">${body}</div>
       <div class="slider-row"><label>HWP</label>
-        <input type="range" min="0" max="180" step="1" value="${p.hwp_deg}" data-party="${p.name}" data-kind="hwp" />
-        <input type="number" min="0" max="180" step="1" value="${p.hwp_deg}" data-party="${p.name}" data-kind="hwp" /><span class="unit">°</span></div>
+        <input type="range" min="0" max="180" step="0.01" value="${p.hwp_deg.toFixed(2)}" data-party="${p.name}" data-kind="hwp" />
+        <input type="number" min="0" max="180" step="0.01" value="${p.hwp_deg.toFixed(2)}" data-party="${p.name}" data-kind="hwp" /><span class="unit">°</span></div>
       <label class="check"><input type="checkbox" checked data-party="${p.name}" data-kind="qwpcheck" /> Use QWP?</label>
       <div class="slider-row"><label>QWP</label>
-        <input type="range" min="0" max="180" step="1" value="${p.qwp_deg}" data-party="${p.name}" data-kind="qwp" />
-        <input type="number" min="0" max="180" step="1" value="${p.qwp_deg}" data-party="${p.name}" data-kind="qwp" /><span class="unit">°</span></div>
+        <input type="range" min="0" max="180" step="0.01" value="${p.qwp_deg.toFixed(2)}" data-party="${p.name}" data-kind="qwp" />
+        <input type="number" min="0" max="180" step="0.01" value="${p.qwp_deg.toFixed(2)}" data-party="${p.name}" data-kind="qwp" /><span class="unit">°</span></div>
     `;
     container.appendChild(div);
 
@@ -189,7 +193,7 @@ function buildParties() {
     for (const kind of ["hwp", "qwp"]) {
       const range = div.querySelector(`input[type=range][data-kind="${kind}"]`);
       const num = div.querySelector(`input[type=number][data-kind="${kind}"]`);
-      linkRangeNumber(range, num);
+      linkRangeNumber(range, num, 2);
       refs[kind] = range;
     }
     partyControls[p.name] = refs;
@@ -215,7 +219,7 @@ function buildStatPlots() {
 
     const btns = document.createElement("div");
     btns.className = "chan-buttons";
-    for (let ch = 0; ch < 16; ch++) {
+    for (let ch = 0; ch < NUM_CHANNELS; ch++) {
       const b = document.createElement("button");
       b.className = "chan-btn" + (statPatterns[j][ch] ? " on" : "");
       b.setAttribute("aria-label", `Toggle channel ${ch + 1} on plot ${j + 1}`);
@@ -241,21 +245,40 @@ function buildStatPlots() {
 
     Plotly.newPlot(
       plot,
-      [{ x: statX, y: statPlotData[j], mode: "lines", line: { color: "#3498db" } }],
+      [{
+        x: statX, y: statPlotData[j], mode: "lines",
+        line: { color: "#3498db", width: 2, shape: "spline" },
+        fill: "tozeroy", fillcolor: "rgba(52,152,219,0.14)",
+        hovertemplate: "%{y}<extra></extra>",
+      }],
       plotLayout(),
       { displayModeBar: false, responsive: true }
     );
   }
 }
 
+const PLOT_FONT = { family: "-apple-system, 'Segoe UI', Roboto, sans-serif", color: "#434A42" };
+const GRID_COLOR = "rgba(67,74,66,0.12)";
+const ZERO_COLOR = "rgba(67,74,66,0.28)";
+
+const AXIS_LINE = "rgba(67,74,66,0.35)";
+
 function plotLayout() {
   return {
     autosize: true,
-    margin: { l: 40, r: 8, t: 8, b: 8 },
+    margin: { l: 46, r: 10, t: 8, b: 26 },
     paper_bgcolor: "#e6e6ea",
     plot_bgcolor: "#e6e6ea",
-    xaxis: { showticklabels: false, color: "#434A42" },
-    yaxis: { color: "#434A42" },
+    font: { ...PLOT_FONT, size: 11 },
+    hovermode: "x unified",
+    xaxis: {
+      showticklabels: true, showgrid: false, zeroline: false, color: "#434A42",
+      showline: true, linecolor: AXIS_LINE, ticks: "outside", nticks: 6,
+    },
+    yaxis: {
+      color: "#434A42", gridcolor: GRID_COLOR, zerolinecolor: ZERO_COLOR,
+      showline: true, linecolor: AXIS_LINE, range: [0, 1], tickformat: "~s",
+    },
   };
 }
 
@@ -329,10 +352,11 @@ function wireEvents() {
     document.getElementById("laser-power"),
     document.getElementById("laser-power-val")
   );
-  // Source HWP slider <-> number
+  // Source HWP slider <-> number (2-decimal angle)
   linkRangeNumber(
     document.getElementById("source-hwp"),
-    document.getElementById("source-hwp-val")
+    document.getElementById("source-hwp-val"),
+    2
   );
 
   document.getElementById("laser-update").onclick = () => {
@@ -533,10 +557,21 @@ function channelsOf(pattern) {
 function updateStatPlots(counts) {
   for (let j = 0; j < NUM_COUNT_PLOTS; j++) {
     const c = counts[j] < 0 ? 0 : counts[j];
-    statPlotData[j].push(c);
-    if (statPlotData[j].length > NUMBER_POINTS_MEM) statPlotData[j].shift();
+    const data = statPlotData[j];
+    data.push(c);
+    if (data.length > NUMBER_POINTS_MEM) data.shift();
     document.getElementById(`stat-val-${j}`).textContent = c;
-    Plotly.restyle(`stat-plot-${j}`, { y: [statPlotData[j]] });
+
+    // Keep the y-axis anchored at 0 with ~12% headroom above the peak. This
+    // stops the view tight-zooming into statistical noise, and keeps drops to 0
+    // visible (a frozen auto-range would hide them below the bottom of the frame).
+    let top = 0;
+    for (const v of data) if (v > top) top = v;
+    Plotly.update(
+      `stat-plot-${j}`,
+      { y: [data] },
+      { "yaxis.range": [0, top > 0 ? top * 1.12 : 1] }
+    );
   }
 }
 
@@ -601,18 +636,27 @@ function drawHistogram(res) {
   const radius = res.radius || 0;
   Plotly.newPlot(
     "hist-plot",
-    [{ x, y, mode: "lines", line: { color: "#3498db" }, name: "Counts" }],
+    [{
+      x, y, mode: "lines", name: "Counts",
+      line: { color: "#3498db", width: 2, shape: "spline" },
+      fill: "tozeroy", fillcolor: "rgba(52,152,219,0.12)",
+    }],
     {
-      margin: { l: 50, r: 20, t: 20, b: 40 },
+      margin: { l: 55, r: 20, t: 20, b: 45 },
       paper_bgcolor: "#e6e6ea",
       plot_bgcolor: "#e6e6ea",
-      xaxis: { title: "Time (ns)", color: "#434A42" },
-      yaxis: { title: "Counts", color: "#434A42" },
+      font: { ...PLOT_FONT, size: 12 },
+      hovermode: "x unified",
+      xaxis: { title: "Time (ns)", color: "#434A42", gridcolor: GRID_COLOR, zeroline: false },
+      yaxis: {
+        title: "Counts", color: "#434A42", gridcolor: GRID_COLOR,
+        zerolinecolor: ZERO_COLOR, rangemode: "tozero",
+      },
       shapes: [
         {
           type: "rect", xref: "x", yref: "paper",
           x0: center - radius, x1: center + radius, y0: 0, y1: 1,
-          fillcolor: "green", opacity: 0.2, line: { width: 0 },
+          fillcolor: "green", opacity: 0.15, line: { width: 0 },
         },
       ],
     },
@@ -623,8 +667,12 @@ function drawHistogram(res) {
 /* =========================================================================
  * Small helpers
  * ========================================================================= */
-function linkRangeNumber(range, num) {
-  range.addEventListener("input", () => (num.value = range.value));
+function linkRangeNumber(range, num, decimals = null) {
+  // Slider -> number: optionally format to a fixed number of decimals (angles).
+  range.addEventListener("input", () => {
+    num.value = decimals != null ? Number(range.value).toFixed(decimals) : range.value;
+  });
+  // Number -> slider: copy raw so typing (e.g. "22.") isn't disrupted.
   num.addEventListener("input", () => (range.value = num.value));
 }
 function setRange(range, value) {

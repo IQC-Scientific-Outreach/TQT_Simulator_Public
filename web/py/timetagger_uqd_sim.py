@@ -71,6 +71,9 @@ class QuantumParty:
         self.update_operators()
 
 class TimeTagger:
+    # Single knob for the channel count. Sizes the delay/threshold/efficiency
+    # arrays and bounds every channel lookup. Must be >= the highest channel
+    # used by any party (4 for the default Alice=1/3, Bob=2/4 setup).
     _num_channels = 16
 
     def __init__(self):
@@ -294,8 +297,8 @@ class TimeTagger:
         if len(channels) == 2:
             chA, chB = channels[0], channels[1]
             
-            dA = self.delays[chA - 1] if 1 <= chA <= 16 else 0
-            dB = self.delays[chB - 1] if 1 <= chB <= 16 else 0
+            dA = self.delays[chA - 1] if 1 <= chA <= self._num_channels else 0
+            dB = self.delays[chB - 1] if 1 <= chB <= self._num_channels else 0
             delta = dA - dB
             # overlap_factor = np.exp(-(delta**2) / (2 * j_sigma**2))
             # if overlap_factor < 1e-5: overlap_factor = 0
@@ -390,7 +393,7 @@ class TimeTagger:
 
             eff = 1.0
             for ch in channels:
-                eff *= self.channel_efficiencies[ch-1] if 1<=ch<=16 else 0
+                eff *= self.channel_efficiencies[ch-1] if 1<=ch<=self._num_channels else 0
 
             probs_map[tuple(channels)] = prob * eff
 
@@ -418,7 +421,7 @@ class TimeTagger:
             current_event_idx += count
 
             for ch in active_channels:
-                delay = self.delays[ch-1] if 1<=ch<=16 else 0
+                delay = self.delays[ch-1] if 1<=ch<=self._num_channels else 0
                 jitter = np.random.normal(0, j_sigma, count)
 
                 times_ns = (these_times * 1e9) + delay + jitter

@@ -1,6 +1,6 @@
 # TQT Photonic Quantum Technologies — Simulator
 
-A Python simulator for the TQT Photonic Quantum Optics experiment at RAC.
+A Python simulator for the TQT Photonic Quantum Optics experiment at RAC
 
 The simulator models a polarization-entangled photon pair source and two detection stations (Alice and Bob). The GUI lets you explore quantum optics concepts interactively:
 

@@ -30,14 +30,15 @@ class WebSimulator:
     """Mirror of ``QuantumOpticalExperiment(simulation=True)`` for the browser."""
 
     def __init__(self):
-        self.config = dict(DEFAULT_CONFIG)
-        self.config["TIMETAGGER_CHANNEL_DELAYS"] = list(
-            DEFAULT_CONFIG["TIMETAGGER_CHANNEL_DELAYS"]
-        )
-
         self.laser = TOpticaLaser(port="COM_SIM")
         self.powermeter = PowerMeter(visa_address="SIM")
         self.timetagger = TimeTagger()
+
+        # Size the config delays to the timetagger's channel count so the two
+        # never disagree (TimeTagger._num_channels is the single source of truth).
+        n = self.timetagger._num_channels
+        self.config = dict(DEFAULT_CONFIG)
+        self.config["TIMETAGGER_CHANNEL_DELAYS"] = [10.0] + [0.0] * (n - 1)
 
         self.timetagger.get_info()
         self.timetagger.switch_logic()
@@ -93,6 +94,10 @@ class WebSimulator:
     def set_source_type(self, index):
         self.timetagger.set_source_type(int(index))
 
+    def get_num_channels(self):
+        """Channel count the UI should render (delay rows, stat buttons)."""
+        return int(self.timetagger._num_channels)
+
     def set_waveplates(self, name, hwp_deg, qwp_deg):
         self.timetagger.set_waveplates(
             name, np.deg2rad(float(hwp_deg)), np.deg2rad(float(qwp_deg))
@@ -146,8 +151,8 @@ class WebSimulator:
         )
 
         delays = self.config["TIMETAGGER_CHANNEL_DELAYS"]
-        delay_a = delays[ch_a - 1] if 1 <= ch_a <= 16 else 0.0
-        delay_b = delays[ch_b - 1] if 1 <= ch_b <= 16 else 0.0
+        delay_a = delays[ch_a - 1] if 1 <= ch_a <= len(delays) else 0.0
+        delay_b = delays[ch_b - 1] if 1 <= ch_b <= len(delays) else 0.0
         hardware_shift = delay_b - delay_a
         real_hist_x = hist_x - hardware_shift
         window_center = delay_a - delay_b
